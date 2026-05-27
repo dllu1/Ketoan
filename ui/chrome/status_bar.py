@@ -1,8 +1,12 @@
-"""Bottom status bar: connection / user / active ledger."""
+"""24px status bar with brand background — all styles in QSS."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
+
+from ui.icons import icon as make_icon
+from ui.tokens import active_tokens
 
 
 class StatusBar(QWidget):
@@ -13,25 +17,92 @@ class StatusBar(QWidget):
         self.setObjectName("StatusBar")
         self.setFixedHeight(self.HEIGHT)
 
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(active_tokens().brand))
+        painter.end()
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 0, 12, 0)
-        layout.setSpacing(16)
+        layout.setSpacing(12)
 
-        self._connection = QLabel("● SQLite local")
-        self._connection.setObjectName("StatusConnection")
-        self._user = QLabel("Người dùng: admin")
-        self._ledger = QLabel("Kỳ kế toán: 2026")
+        online_pill = QLabel("● ONLINE")
+        online_pill.setObjectName("StatusBarPill")
+        online_pill.setAlignment(Qt.AlignCenter)
+        layout.addWidget(online_pill)
 
-        layout.addWidget(self._connection)
-        layout.addWidget(self._user)
+        self._ledger = QLabel("Số cái: 01.01.2026 → 31.12.2026")
+        self._ledger.setObjectName("StatusBarText")
+        layout.addWidget(self._ledger)
+
+        layout.addWidget(self._sep())
+        layout.addWidget(self._icon_text("download", "Sync 14:32"))
+        layout.addWidget(self._sep())
+        layout.addWidget(self._icon_text("user", "3 online"))
+
         layout.addStretch(1)
-        layout.addWidget(self._ledger, alignment=Qt.AlignRight)
 
-    def set_connection(self, text: str) -> None:
-        self._connection.setText(text)
+        layout.addWidget(self._kbd_text("F1", "Help"))
+        layout.addWidget(self._kbd_text("Ctrl N", "Bút toán"))
+        layout.addWidget(self._kbd_text("Ctrl K", "Tìm"))
+        layout.addWidget(self._sep())
 
-    def set_user(self, text: str) -> None:
-        self._user.setText(text)
+        self._user = QLabel("NMA · KTT")
+        self._user.setObjectName("StatusBarPill")
+        self._user.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._user)
+
+        version = QLabel("v3.2.0")
+        version.setObjectName("StatusBarText")
+        layout.addWidget(version)
+
+    # ---- helpers ----------------------------------------------------------
+
+    @staticmethod
+    def _sep() -> QLabel:
+        sep = QLabel("·")
+        sep.setObjectName("StatusBarSep")
+        return sep
+
+    def _icon_text(self, icon_name: str, text: str) -> QWidget:
+        wrap = QWidget()
+        wrap.setObjectName("StatusBarItem")
+        layout = QHBoxLayout(wrap)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        ic = QLabel()
+        ic.setObjectName("StatusBarIcon")
+        ic.setPixmap(make_icon(icon_name, color="#0a1220").pixmap(QSize(10, 10)))
+        layout.addWidget(ic)
+
+        text_label = QLabel(text)
+        text_label.setObjectName("StatusBarText")
+        layout.addWidget(text_label)
+        return wrap
+
+    @staticmethod
+    def _kbd_text(key: str, label: str) -> QWidget:
+        wrap = QWidget()
+        wrap.setObjectName("StatusBarItem")
+        layout = QHBoxLayout(wrap)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        k = QLabel(key)
+        k.setObjectName("StatusBarKbd")
+        k.setAlignment(Qt.AlignCenter)
+        layout.addWidget(k)
+
+        t = QLabel(label)
+        t.setObjectName("StatusBarText")
+        layout.addWidget(t)
+        return wrap
+
+    # ---- API --------------------------------------------------------------
 
     def set_ledger(self, text: str) -> None:
         self._ledger.setText(text)
+
+    def set_user(self, text: str) -> None:
+        self._user.setText(text)

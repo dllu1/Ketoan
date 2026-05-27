@@ -7,9 +7,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QMessageBox,
-    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -25,6 +23,8 @@ from domain.services.item_service import ItemService
 from domain.services.partner_service import PartnerService
 from ui.modals.item_modal import ItemModal
 from ui.modals.partner_modal import PartnerModal
+from ui.primitives.button import Button, ButtonVariant
+from ui.primitives.icon_input import IconInput
 
 
 class DirectoryScreen(QWidget):
@@ -61,15 +61,16 @@ class DirectoryScreen(QWidget):
         layout.setSpacing(8)
 
         toolbar = QHBoxLayout()
-        self._partner_search = QLineEdit()
-        self._partner_search.setPlaceholderText("Tìm theo mã / tên / MST…")
-        self._partner_search.textChanged.connect(self._reload_partners)
+        self._partner_search = IconInput(
+            placeholder="Tìm theo mã / tên / MST…",
+            icon_name="search",
+        )
+        self._partner_search.text_changed.connect(lambda _: self._reload_partners())
 
-        btn_new = QPushButton("+ Đối tác mới")
-        btn_new.setObjectName("PrimaryButton")
+        btn_new = Button("Đối tác mới", variant=ButtonVariant.PRIMARY, icon_name="plus")
         btn_new.clicked.connect(self._on_partner_new)
 
-        btn_edit = QPushButton("Sửa")
+        btn_edit = Button("Sửa", icon_name="edit")
         btn_edit.clicked.connect(self._on_partner_edit)
 
         toolbar.addWidget(self._partner_search, 1)
@@ -151,15 +152,16 @@ class DirectoryScreen(QWidget):
         layout.setSpacing(8)
 
         toolbar = QHBoxLayout()
-        self._item_search = QLineEdit()
-        self._item_search.setPlaceholderText("Tìm theo mã / tên vật tư…")
-        self._item_search.textChanged.connect(self._reload_items)
+        self._item_search = IconInput(
+            placeholder="Tìm theo mã / tên vật tư…",
+            icon_name="search",
+        )
+        self._item_search.text_changed.connect(lambda _: self._reload_items())
 
-        btn_new = QPushButton("+ Vật tư mới")
-        btn_new.setObjectName("PrimaryButton")
+        btn_new = Button("Vật tư mới", variant=ButtonVariant.PRIMARY, icon_name="plus")
         btn_new.clicked.connect(self._on_item_new)
 
-        btn_edit = QPushButton("Sửa")
+        btn_edit = Button("Sửa", icon_name="edit")
         btn_edit.clicked.connect(self._on_item_edit)
 
         toolbar.addWidget(self._item_search, 1)

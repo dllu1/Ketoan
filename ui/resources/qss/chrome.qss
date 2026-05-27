@@ -1,0 +1,365 @@
+﻿/* Chrome shell: TitleBar (32) / Sidebar (232) / TopBar (54) / StatusBar (24). */
+
+#ChromeWindow {{
+    background-color: {bg};
+    border: 1px solid {line};
+}}
+
+/* ---------- TitleBar (32px) ------------------------------------------ */
+
+#TitleBar {{
+    background-color: {panel_solid};
+    border-bottom: 1px solid {line};
+}}
+
+QLabel#TitleBrandCrest {{
+    background-color: {brand};
+    color: {brand_pressed};
+    border-radius: 4px;
+    font-weight: 800;
+    font-size: 10px;
+}}
+
+QLabel#TitleBrandText {{
+    color: {txt};
+    font-size: 11px;
+    font-weight: 600;
+}}
+
+QLabel#TitleBrandVersion {{
+    color: {txt_4};
+    font-size: 10px;
+}}
+
+QPushButton#TitleMenu {{
+    background-color: transparent;
+    color: {txt_2};
+    border: none;
+    padding: 0 10px;
+    font-size: 11px;
+    font-weight: 500;
+}}
+QPushButton#TitleMenu:hover {{
+    background-color: {hover};
+    color: {txt};
+}}
+
+QLabel#TitleBreadcrumbHere {{
+    color: {txt};
+    font-size: 11px;
+    font-weight: 500;
+}}
+
+QLabel#TitleBreadcrumbSep {{
+    color: {txt_4};
+    font-size: 11px;
+}}
+
+QLabel#TitleBreadcrumbMuted {{
+    color: {txt_3};
+    font-size: 11px;
+}}
+
+QPushButton#MinButton, QPushButton#MaxButton, QPushButton#CloseButton {{
+    background-color: transparent;
+    color: {txt_2};
+    border: none;
+    font-size: 12px;
+}}
+QPushButton#MinButton:hover, QPushButton#MaxButton:hover {{
+    background-color: {hover};
+    color: {txt};
+}}
+QPushButton#CloseButton:hover {{
+    background-color: #e81123;
+    color: #ffffff;
+}}
+
+/* ---------- Sidebar (232px) ------------------------------------------ */
+
+#Sidebar {{
+    background-color: {panel_solid};
+    border-right: 1px solid {line};
+}}
+
+#SidebarHead {{
+    background-color: transparent;
+    border-bottom: 1px solid {line};
+}}
+
+QLabel#SidebarCrest {{
+    background-color: {brand};
+    color: {brand_pressed};
+    border-radius: 6px;
+    font-weight: 800;
+    font-size: 11px;
+}}
+
+QLabel#SidebarCompanyName {{
+    color: {txt};
+    font-size: 11px;
+    font-weight: 600;
+}}
+
+QLabel#SidebarCompanyMeta {{
+    color: {txt_3};
+    font-size: 10px;
+}}
+
+QLabel#SidebarSectionLabel {{
+    color: {txt_4};
+    font-size: 10px;
+    font-weight: 600;
+    padding: 14px 4px 4px;
+}}
+
+QPushButton#SidebarItem {{
+    background-color: transparent;
+    color: {txt_2};
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 0 10px;
+    text-align: left;
+    min-height: {row_h}px;
+}}
+QPushButton#SidebarItem:hover {{
+    background-color: {hover};
+    color: {txt};
+}}
+QPushButton#SidebarItem:checked {{
+    background-color: {active};
+    border-color: {brand_800};
+    color: {txt};
+}}
+
+QLabel#SidebarItemVi {{
+    color: {txt};
+    font-size: 12px;
+    font-weight: 500;
+}}
+
+QLabel#SidebarItemEn {{
+    color: {txt_4};
+    font-size: 9px;
+    font-weight: 600;
+}}
+
+QPushButton#SidebarItem:checked QLabel#SidebarItemVi {{
+    color: {txt};
+}}
+
+QLabel#SidebarItemHot {{
+    color: {txt_4};
+    font-size: 10px;
+    font-weight: 600;
+}}
+
+QPushButton#SidebarItem:checked QLabel#SidebarItemHot {{
+    color: {brand_300};
+}}
+
+QLabel#SidebarItemBadge {{
+    background-color: {bad};
+    color: #ffffff;
+    border-radius: 8px;
+    padding: 0 6px;
+    font-size: 9px;
+    font-weight: 700;
+    min-width: 18px;
+    min-height: 16px;
+}}
+
+#SidebarFoot {{
+    background-color: transparent;
+    border-top: 1px solid {line};
+}}
+
+QLabel#SidebarFootAvatar {{
+    background-color: {card_2};
+    color: {brand};
+    border: 1px solid {line_strong};
+    border-radius: 14px;
+    font-size: 11px;
+    font-weight: 700;
+}}
+
+QLabel#SidebarFootName {{
+    color: {txt};
+    font-size: 11px;
+    font-weight: 600;
+}}
+
+QLabel#SidebarFootRole {{
+    color: {txt_3};
+    font-size: 10px;
+}}
+
+QPushButton#SidebarFootGear {{
+    background-color: transparent;
+    border: 1px solid {line};
+    border-radius: 5px;
+    color: {txt_3};
+}}
+QPushButton#SidebarFootGear:hover {{
+    background-color: {hover};
+    color: {txt};
+}}
+
+/* ---------- TopBar (54px) ------------------------------------------- */
+
+#TopBar {{
+    background-color: {panel_solid};
+    border-bottom: 1px solid {line};
+}}
+
+QLabel#TopBarTitleVi {{
+    color: {txt};
+    font-size: 15px;
+    font-weight: 600;
+}}
+
+QLabel#TopBarTitleEn {{
+    color: {txt_3};
+    font-size: 10px;
+    font-weight: 600;
+}}
+
+QFrame#TopBarPeriod {{
+    background-color: {card_2};
+    border: 1px solid {line};
+    border-radius: 6px;
+}}
+QFrame#TopBarPeriod:hover {{
+    background-color: {hover};
+    border-color: {brand_700};
+}}
+
+QLabel#TopBarPeriodLabel {{
+    color: {txt_3};
+    font-size: 9px;
+    font-weight: 600;
+}}
+
+QLabel#TopBarPeriodValue {{
+    color: {txt};
+    font-size: 12px;
+    font-weight: 600;
+}}
+
+QPushButton#TopBarIconButton {{
+    background-color: {card_2};
+    border: 1px solid {line};
+    border-radius: 6px;
+    color: {txt_2};
+    min-width: 32px;
+    min-height: 32px;
+}}
+QPushButton#TopBarIconButton:hover {{
+    background-color: {hover};
+    border-color: {brand_700};
+    color: {txt};
+}}
+
+QFrame#TopBarUser {{
+    background-color: {card_2};
+    border: 1px solid {line};
+    border-radius: 6px;
+}}
+QFrame#TopBarUser:hover {{
+    border-color: {brand_700};
+}}
+
+QLabel#TopBarUserAvatar {{
+    background-color: {brand};
+    color: {brand_pressed};
+    border-radius: 5px;
+    font-size: 10px;
+    font-weight: 700;
+}}
+
+QLabel#TopBarUserName {{
+    color: {txt};
+    font-size: 11px;
+    font-weight: 600;
+}}
+
+QLabel#TopBarUserRole {{
+    color: {txt_3};
+    font-size: 9px;
+}}
+
+QLabel#TopBarNotificationPin {{
+    background-color: {bad};
+    color: #ffffff;
+    border-radius: 7px;
+    padding: 0 4px;
+    font-size: 8px;
+    font-weight: 700;
+}}
+
+/* ---------- StatusBar (24px, brand bg) ------------------------------ */
+
+#StatusBar {{
+    background-color: {brand};
+    border-top: 1px solid {brand_700};
+    color: {brand_pressed};
+}}
+
+#StatusBar QLabel {{
+    color: {brand_pressed};
+    background-color: transparent;
+    font-size: 11px;
+    font-weight: 500;
+}}
+
+QLabel#StatusBarPill {{
+    background-color: rgba(10, 18, 32, 0.32);
+    color: {brand_pressed};
+    border-radius: 3px;
+    padding: 0 6px;
+    font-weight: 700;
+    font-size: 10px;
+}}
+
+QLabel#StatusBarSep {{
+    color: {brand_pressed};
+    font-size: 11px;
+}}
+
+QLabel#StatusBarText {{
+    color: {brand_pressed};
+    background-color: transparent;
+    font-size: 11px;
+    font-weight: 500;
+}}
+
+QLabel#StatusBarIcon {{
+    background-color: transparent;
+}}
+
+#StatusBarItem {{
+    background-color: transparent;
+}}
+
+QLabel#StatusBarKbd {{
+    background-color: rgba(255, 255, 255, 0.55);
+    color: {brand_pressed};
+    border-radius: 2px;
+    padding-left: 4px;
+    padding-right: 4px;
+    font-size: 9px;
+    font-weight: 700;
+    min-width: 14px;
+    min-height: 14px;
+}}
+
+/* ---------- Body / Placeholder -------------------------------------- */
+
+#ContentStack, #Body, #MainColumn {{
+    background-color: {bg};
+}}
+
+#PlaceholderLabel {{
+    color: {txt_3};
+    font-size: 13px;
+}}

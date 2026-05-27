@@ -19,10 +19,11 @@ USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_PATH = USER_DATA_DIR / "ketoan.db"
 
-ACCENT = "#3b82f6"
+# Legacy palette constants — prefer ui.tokens.active_tokens() for new code.
+BRAND = "#a1caff"
 BG_BASE = "#0b1018"
-BG_PANEL = "#111827"
+BG_PANEL = "#121925"
 BG_ELEVATED = "#1f2937"
-TEXT_PRIMARY = "#e5e7eb"
-TEXT_MUTED = "#9ca3af"
+TEXT_PRIMARY = "#f3f5f9"
+TEXT_MUTED = "#8e98ab"
 BORDER = "#1f2a3a"

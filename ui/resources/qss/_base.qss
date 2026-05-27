@@ -1,0 +1,61 @@
+/* Base palette + typography + scrollbars (mirror components/styles.css). */
+
+/* Default text colour and font for every widget. Backgrounds are set
+   explicitly by container widgets so child widgets inherit transparently. */
+QWidget {{
+    color: {txt};
+    font-family: "{font_family}", "Segoe UI", "Cascadia Mono", monospace;
+    font-size: {font_size}px;
+}}
+
+/* The window itself owns the page background. */
+QWidget#ChromeWindow,
+QWidget#Body,
+QWidget#MainColumn,
+QWidget#ContentStack,
+QWidget#DashboardContent,
+QWidget#DashboardScreen,
+QWidget#DirectoryScreen {{
+    background-color: {bg};
+}}
+
+QToolTip {{
+    background-color: {card_2};
+    color: {txt};
+    border: 1px solid {line_strong};
+    padding: 4px 8px;
+}}
+
+QScrollBar:vertical {{
+    background-color: transparent;
+    width: 10px;
+    border: none;
+    margin: 0;
+}}
+QScrollBar::handle:vertical {{
+    background-color: {line_strong};
+    border-radius: 5px;
+    min-height: 30px;
+}}
+QScrollBar::handle:vertical:hover {{ background-color: {brand_700}; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: none; border: none; height: 0px;
+}}
+
+QScrollBar:horizontal {{
+    background-color: transparent;
+    height: 10px;
+    border: none;
+    margin: 0;
+}}
+QScrollBar::handle:horizontal {{
+    background-color: {line_strong};
+    border-radius: 5px;
+    min-width: 30px;
+}}
+QScrollBar::handle:horizontal:hover {{ background-color: {brand_700}; }}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+    background: none; border: none; width: 0px;
+}}

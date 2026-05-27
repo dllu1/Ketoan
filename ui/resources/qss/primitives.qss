@@ -1,0 +1,348 @@
+﻿/* Primitives matching the .btn / .badge / .input / .card / .kbd from styles.css */
+
+/* ---------- Buttons (h=28, sm=24) ----------------------------------- */
+
+QPushButton[role="btn"] {{
+    background-color: {card_2};
+    color: {txt};
+    border: 1px solid {line_strong};
+    border-radius: 6px;
+    padding: 0 12px;
+    min-height: 28px;
+    font-size: 12px;
+    font-weight: 500;
+}}
+QPushButton[role="btn"]:hover {{
+    background-color: {hover};
+    border-color: {brand_700};
+}}
+
+QPushButton[role="btn"][variant="primary"] {{
+    background-color: {brand};
+    color: {brand_pressed};
+    border: 1px solid {brand};
+    font-weight: 700;
+}}
+QPushButton[role="btn"][variant="primary"]:hover {{
+    background-color: {brand_400};
+    border-color: {brand_400};
+}}
+
+QPushButton[role="btn"][variant="ghost"] {{
+    background-color: transparent;
+    color: {txt_2};
+    border: 1px solid transparent;
+}}
+QPushButton[role="btn"][variant="ghost"]:hover {{
+    background-color: {hover};
+    color: {txt};
+}}
+
+QPushButton[role="btn"][variant="danger"] {{
+    background-color: transparent;
+    color: {bad};
+    border: 1px solid {bad};
+}}
+QPushButton[role="btn"][variant="danger"]:hover {{
+    background-color: {bad};
+    color: {bg};
+}}
+
+QPushButton[role="btn"][size="sm"] {{
+    min-height: 24px;
+    padding: 0 8px;
+    font-size: 11px;
+}}
+
+/* ---------- Badge & status pill ------------------------------------- */
+
+QLabel[role="badge"] {{
+    background-color: {card_2};
+    color: {txt_2};
+    border: 1px solid {line};
+    border-radius: 4px;
+    padding: 0 7px;
+    min-height: 18px;
+    font-size: 10px;
+    font-weight: 700;
+}}
+QLabel[role="badge"][tone="good"]  {{ background-color: {brand_tint};       color: {good};  border-color: {good}; }}
+QLabel[role="badge"][tone="warn"]  {{ background-color: {brand_tint};       color: {warn};  border-color: {warn}; }}
+QLabel[role="badge"][tone="bad"]   {{ background-color: {brand_tint};       color: {bad};   border-color: {bad}; }}
+QLabel[role="badge"][tone="brand"] {{ background-color: {brand_tint_strong}; color: {brand}; border-color: {brand_700}; }}
+
+QLabel[role="status-pill"] {{
+    background-color: {card_2};
+    color: {txt_2};
+    border-radius: 3px;
+    padding: 1px 7px;
+    font-size: 9px;
+    font-weight: 700;
+}}
+QLabel[role="status-pill"][state="posted"] {{ background-color: {brand_tint}; color: {good}; }}
+QLabel[role="status-pill"][state="draft"]  {{ background-color: {brand_tint}; color: {warn}; }}
+QLabel[role="status-pill"][state="review"] {{ background-color: {brand_tint_strong}; color: {brand}; }}
+
+/* ---------- Kbd ------------------------------------------------------ */
+
+QLabel[role="kbd"] {{
+    background-color: {card_2};
+    color: {txt_2};
+    border: 1px solid {line};
+    border-bottom: 2px solid {line_strong};
+    border-radius: 4px;
+    padding: 0 5px;
+    min-height: 18px;
+    font-size: 10px;
+    font-weight: 600;
+}}
+
+/* ---------- Inputs --------------------------------------------------- */
+
+QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QDoubleSpinBox, QSpinBox, QDateEdit {{
+    background-color: {card_2};
+    color: {txt};
+    border: 1px solid {line};
+    border-radius: 6px;
+    padding: 4px 10px;
+    selection-background-color: {brand_tint_strong};
+    selection-color: {brand};
+    min-height: 22px;
+}}
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,
+QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus, QDateEdit:focus {{
+    border-color: {brand};
+}}
+
+QComboBox::drop-down {{
+    border: none;
+    width: 18px;
+}}
+
+QFrame#IconInput {{
+    background-color: {card_2};
+    border: 1px solid {line};
+    border-radius: 6px;
+}}
+QFrame#IconInput:focus-within {{
+    border-color: {brand};
+}}
+QFrame#IconInput QLineEdit {{
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0 4px;
+    font-size: 12px;
+    min-height: 28px;
+}}
+
+/* ---------- Card ----------------------------------------------------- */
+
+QFrame#Card {{
+    background-color: {card};
+    border: 1px solid {line};
+    border-radius: {radius}px;
+}}
+
+QFrame#CardHeader, QFrame#CardBody {{
+    background-color: transparent;
+    border: none;
+}}
+
+QFrame#CardHeader {{
+    border-bottom: 1px solid {line};
+}}
+
+QLabel#CardTitle {{
+    color: {txt};
+    font-weight: 600;
+    font-size: 12px;
+}}
+
+QLabel#CardSubtitle {{
+    color: {txt_3};
+    font-size: 10px;
+    font-weight: 600;
+}}
+
+/* ---------- Filter chip ---------------------------------------------- */
+
+QPushButton[role="filter-chip"] {{
+    background-color: transparent;
+    color: {txt_3};
+    border: 1px solid {line};
+    border-radius: 13px;
+    padding: 0 12px;
+    min-height: 26px;
+    font-size: 11px;
+    font-weight: 600;
+}}
+QPushButton[role="filter-chip"]:hover {{
+    color: {txt};
+    border-color: {brand_700};
+}}
+QPushButton[role="filter-chip"]:checked {{
+    background-color: {brand_tint};
+    border-color: {brand};
+    color: {brand};
+}}
+
+/* ---------- Segmented ------------------------------------------------ */
+
+QFrame#Segmented {{
+    background-color: {card_2};
+    border: 1px solid {line};
+    border-radius: 6px;
+    padding: 2px;
+}}
+QFrame#Segmented QPushButton {{
+    background-color: transparent;
+    color: {txt_3};
+    border: none;
+    border-radius: 4px;
+    padding: 0 10px;
+    min-height: 22px;
+    font-size: 11px;
+    font-weight: 500;
+}}
+QFrame#Segmented QPushButton:checked {{
+    background-color: {card};
+    color: {txt};
+    border: 1px solid {line_strong};
+}}
+
+/* ---------- EmptyState ------------------------------------------------ */
+
+QFrame#EmptyState {{ background-color: transparent; }}
+QLabel#EmptyTitle  {{ color: {txt_2}; font-weight: 600; font-size: 13px; }}
+QLabel#EmptyHint   {{ color: {txt_3}; font-size: 11px; }}
+
+/* ---------- Tables --------------------------------------------------- */
+
+QTableView, QTableWidget {{
+    background-color: {card};
+    alternate-background-color: {card_2};
+    gridline-color: {line_soft};
+    selection-background-color: {brand_tint_strong};
+    selection-color: {brand};
+    border: 1px solid {line};
+    border-radius: {radius}px;
+}}
+QHeaderView::section {{
+    background-color: {card_2};
+    color: {txt_3};
+    border: none;
+    border-right: 1px solid {line_soft};
+    border-bottom: 1px solid {line};
+    padding: 6px 12px;
+    font-weight: 600;
+    font-size: 10px;
+}}
+QTableWidget::item {{ padding: 4px 12px; }}
+
+/* ---------- Tabs ----------------------------------------------------- */
+
+QTabWidget::pane {{
+    border: 1px solid {line};
+    background-color: {card};
+    border-radius: {radius}px;
+    top: -1px;
+}}
+QTabBar::tab {{
+    background-color: transparent;
+    color: {txt_3};
+    padding: 8px 16px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-size: 11px;
+    font-weight: 600;
+}}
+QTabBar::tab:hover {{ color: {txt}; background-color: {hover}; }}
+QTabBar::tab:selected {{
+    color: {txt};
+    border-bottom-color: {brand};
+    background-color: {brand_tint};
+}}
+
+/* ---------- Screen headings ------------------------------------------ */
+
+#ScreenTitle {{
+    font-size: 20px;
+    font-weight: 700;
+    color: {txt};
+}}
+
+#ScreenSubtitle {{
+    color: {txt_3};
+    font-size: 11px;
+    font-weight: 600;
+}}
+
+/* ---------- KPI Card ------------------------------------------------- */
+
+QFrame#KpiCard {{
+    background-color: {card};
+    border: 1px solid {line};
+    border-radius: {radius}px;
+}}
+
+QLabel#KpiLabelVi {{
+    color: {txt_3};
+    font-size: 10px;
+    font-weight: 700;
+}}
+
+QLabel#KpiLabelEn {{
+    color: {txt_4};
+    font-size: 10px;
+    font-weight: 500;
+}}
+
+QLabel#KpiValue {{
+    color: {txt};
+    font-size: 17px;
+    font-weight: 700;
+}}
+
+QLabel#KpiUnit {{
+    color: {txt_3};
+    font-size: 11px;
+    font-weight: 500;
+}}
+
+QLabel#KpiDelta {{
+    font-size: 11px;
+    font-weight: 700;
+}}
+QLabel#KpiDelta[trend="up"]   {{ color: {good}; }}
+QLabel#KpiDelta[trend="down"] {{ color: {bad}; }}
+
+QLabel#KpiHint {{
+    color: {txt_3};
+    font-size: 11px;
+}}
+
+/* ---------- Alert strip --------------------------------------------- */
+
+QFrame#AlertStrip {{
+    background-color: {brand_tint};
+    border: 1px solid {brand_700};
+    border-radius: {radius}px;
+}}
+
+QLabel#AlertIcon {{
+    background-color: {brand};
+    color: {brand_pressed};
+    border-radius: 14px;
+    font-weight: 700;
+}}
+
+QLabel#AlertText {{
+    color: {txt};
+    font-size: 12px;
+}}
+
+QLabel#AlertTextEn {{
+    color: {txt_3};
+    font-size: 11px;
+}}

@@ -1,10 +1,11 @@
-"""Frameless main window with custom Chrome (title bar + sidebar + status bar)."""
+"""Frameless main window: TitleBar · (Sidebar | TopBar + Content) · StatusBar."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -14,8 +15,25 @@ from app.config import APP_NAME
 from ui.chrome.sidebar import Sidebar
 from ui.chrome.status_bar import StatusBar
 from ui.chrome.title_bar import TitleBar
+from ui.chrome.top_bar import TopBar
 from ui.screens.dashboard_screen import DashboardScreen
 from ui.screens.directory_screen import DirectoryScreen
+
+
+# (key, vi, en, breadcrumb-here)
+_SCREEN_META: dict[str, tuple[str, str, str]] = {
+    "dashboard":  ("Tổng quan",          "Dashboard / Overview",       "Tổng quan / Dashboard"),
+    "journal":    ("Sổ nhật ký chung",   "General Journal",            "Sổ nhật ký / Journal"),
+    "sales":      ("Bán hàng",           "Sales",                      "Bán hàng / Sales"),
+    "purchase":   ("Mua hàng",           "Purchases",                  "Mua hàng / Purchases"),
+    "inventory":  ("Kho hàng",           "Inventory",                  "Kho hàng / Inventory"),
+    "cash":       ("Quỹ & Ngân hàng",    "Cash & Bank",                "Quỹ & Ngân hàng / Cash"),
+    "assets":     ("Tài sản cố định",    "Fixed Assets",               "TSCĐ / Fixed Assets"),
+    "reports":    ("Báo cáo tài chính",  "Financial Reports",          "Báo cáo / Reports"),
+    "tax":        ("Báo cáo thuế",       "Tax Reports",                "Báo cáo thuế / Tax"),
+    "directory":  ("Danh mục",           "Catalog",                    "Danh mục / Catalog"),
+    "settings":   ("Cấu hình",           "Settings",                   "Cấu hình / Settings"),
+}
 
 
 class ChromeWindow(QWidget):
@@ -26,11 +44,10 @@ class ChromeWindow(QWidget):
         self.setObjectName("ChromeWindow")
         self.setWindowTitle(APP_NAME)
         self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
-        self.setAttribute(Qt.WA_TranslucentBackground, False)
         self.setMouseTracking(True)
-        self.setMinimumSize(1024, 640)
+        self.setMinimumSize(1100, 700)
 
-        self._resize_edge: Qt.Edges | None = None
+        self._resize_edge = None
         self._resize_start_geo: QRect | None = None
         self._resize_start_pos: QPoint | None = None
 
@@ -41,7 +58,7 @@ class ChromeWindow(QWidget):
         root.setContentsMargins(1, 1, 1, 1)
         root.setSpacing(0)
 
-        self._title_bar = TitleBar(APP_NAME)
+        self._title_bar = TitleBar()
         self._title_bar.minimize_clicked.connect(self.showMinimized)
         self._title_bar.maximize_clicked.connect(self._toggle_maximize)
         self._title_bar.close_clicked.connect(self.close)
@@ -55,9 +72,16 @@ class ChromeWindow(QWidget):
         self._sidebar = Sidebar()
         self._sidebar.module_selected.connect(self._on_module_selected)
 
+        main_column = QWidget()
+        main_column.setObjectName("MainColumn")
+        col_layout = QVBoxLayout(main_column)
+        col_layout.setContentsMargins(0, 0, 0, 0)
+        col_layout.setSpacing(0)
+
+        self._top_bar = TopBar()
+
         self._stack = QStackedWidget()
         self._stack.setObjectName("ContentStack")
-
         self._screens: dict[str, QWidget] = {
             "dashboard": DashboardScreen(),
             "directory": DirectoryScreen(),
@@ -65,8 +89,11 @@ class ChromeWindow(QWidget):
         for screen in self._screens.values():
             self._stack.addWidget(screen)
 
+        col_layout.addWidget(self._top_bar)
+        col_layout.addWidget(self._stack, 1)
+
         body_layout.addWidget(self._sidebar)
-        body_layout.addWidget(self._stack, 1)
+        body_layout.addWidget(main_column, 1)
 
         self._status_bar = StatusBar()
 
@@ -93,7 +120,13 @@ class ChromeWindow(QWidget):
         self._stack.setCurrentWidget(screen)
         self._sidebar.set_active(key)
 
-    # --- frameless resize handling -------------------------------------------
+        meta = _SCREEN_META.get(key)
+        if meta:
+            vi, en, breadcrumb = meta
+            self._top_bar.set_screen_title(vi, en)
+            self._title_bar.set_breadcrumb(breadcrumb)
+
+    # --- frameless resize handling -----------------------------------------
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._resize_edge and (event.buttons() & Qt.LeftButton):
@@ -116,7 +149,7 @@ class ChromeWindow(QWidget):
         self._resize_start_pos = None
         self.unsetCursor()
 
-    def _edge_at(self, pos: QPoint) -> Qt.Edges | None:
+    def _edge_at(self, pos: QPoint):
         if self.isMaximized():
             return None
         m = self.RESIZE_MARGIN
@@ -134,19 +167,21 @@ class ChromeWindow(QWidget):
 
     def _update_cursor(self, pos: QPoint) -> None:
         edge = self._edge_at(pos)
-        TopLeftEdge = Qt.Edge.TopEdge | Qt.Edge.LeftEdge
-        TopRightEdge = Qt.Edge.TopEdge | Qt.Edge.RightEdge
-        BottomLeftEdge = Qt.Edge.BottomEdge | Qt.Edge.LeftEdge
-        BottomRightEdge = Qt.Edge.BottomEdge | Qt.Edge.RightEdge
-
-        if edge in (Qt.LeftEdge, Qt.RightEdge):
-            self.setCursor(Qt.SizeHorCursor)
-        elif edge in (Qt.TopEdge, Qt.BottomEdge):
-            self.setCursor(Qt.SizeVerCursor)
-        elif edge in (TopLeftEdge, BottomRightEdge):
+        if edge is None:
+            self.unsetCursor()
+            return
+        top = bool(edge & Qt.TopEdge)
+        bottom = bool(edge & Qt.BottomEdge)
+        left = bool(edge & Qt.LeftEdge)
+        right = bool(edge & Qt.RightEdge)
+        if (top and left) or (bottom and right):
             self.setCursor(Qt.SizeFDiagCursor)
-        elif edge in (TopRightEdge, BottomLeftEdge):
+        elif (top and right) or (bottom and left):
             self.setCursor(Qt.SizeBDiagCursor)
+        elif left or right:
+            self.setCursor(Qt.SizeHorCursor)
+        elif top or bottom:
+            self.setCursor(Qt.SizeVerCursor)
         else:
             self.unsetCursor()
 
@@ -157,7 +192,6 @@ class ChromeWindow(QWidget):
         geo = QRect(self._resize_start_geo)
         min_w = self.minimumWidth()
         min_h = self.minimumHeight()
-
         if self._resize_edge & Qt.LeftEdge:
             new_x = geo.x() + delta.x()
             new_w = geo.width() - delta.x()
@@ -174,16 +208,14 @@ class ChromeWindow(QWidget):
                 geo.setHeight(new_h)
         if self._resize_edge & Qt.BottomEdge:
             geo.setHeight(max(min_h, geo.height() + delta.y()))
-
         self.setGeometry(geo)
 
 
 class _Placeholder(QWidget):
     def __init__(self, key: str) -> None:
-        from PySide6.QtWidgets import QLabel, QVBoxLayout
         super().__init__()
         layout = QVBoxLayout(self)
-        label = QLabel(f"Module '{key}' — chưa được triển khai (sẽ làm ở phase sau)")
+        label = QLabel(f"Module '{key}' — sẽ được triển khai ở phase sau")
         label.setObjectName("PlaceholderLabel")
         label.setAlignment(Qt.AlignCenter)
         layout.addWidget(label)
