@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPoint, QRect, Qt
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QKeySequence, QMouseEvent, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -18,6 +18,9 @@ from ui.chrome.title_bar import TitleBar
 from ui.chrome.top_bar import TopBar
 from ui.screens.dashboard_screen import DashboardScreen
 from ui.screens.directory_screen import DirectoryScreen
+from ui.screens.journal_screen import JournalScreen
+from ui.screens.placeholder_screen import PlaceholderScreen
+from ui.screens.settings_screen import SettingsScreen
 
 
 # (key, vi, en, breadcrumb-here)
@@ -71,6 +74,13 @@ class ChromeWindow(QWidget):
 
         self._sidebar = Sidebar()
         self._sidebar.module_selected.connect(self._on_module_selected)
+        self._sidebar.settings_requested.connect(
+            lambda: self._on_module_selected("settings")
+        )
+        QShortcut(QKeySequence("F9"), self,
+                  activated=lambda: self._on_module_selected("directory"))
+        QShortcut(QKeySequence("F10"), self,
+                  activated=lambda: self._on_module_selected("settings"))
 
         main_column = QWidget()
         main_column.setObjectName("MainColumn")
@@ -85,6 +95,22 @@ class ChromeWindow(QWidget):
         self._screens: dict[str, QWidget] = {
             "dashboard": DashboardScreen(),
             "directory": DirectoryScreen(),
+            "journal": JournalScreen(),
+            "settings": SettingsScreen(),
+            "sales": PlaceholderScreen(
+                title_vi="Bán hàng", title_en="Sales", icon_name="invoice", phase="Phase 3"),
+            "inventory": PlaceholderScreen(
+                title_vi="Kho hàng", title_en="Inventory", icon_name="box", phase="Phase 3"),
+            "purchase": PlaceholderScreen(
+                title_vi="Mua hàng", title_en="Purchases", icon_name="cart", phase="Phase 3"),
+            "cash": PlaceholderScreen(
+                title_vi="Quỹ & Ngân hàng", title_en="Cash & Bank", icon_name="wallet", phase="Phase 3"),
+            "assets": PlaceholderScreen(
+                title_vi="Tài sản cố định", title_en="Fixed Assets", icon_name="cube", phase="Phase 3"),
+            "reports": PlaceholderScreen(
+                title_vi="Báo cáo tài chính", title_en="Financial Reports", icon_name="chart", phase="Phase 4"),
+            "tax": PlaceholderScreen(
+                title_vi="Báo cáo thuế", title_en="Tax Reports", icon_name="tax", phase="Phase 4"),
         }
         for screen in self._screens.values():
             self._stack.addWidget(screen)

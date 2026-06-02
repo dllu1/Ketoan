@@ -15,12 +15,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from data.repositories.account_repo import AccountRepository
 from data.repositories.item_repo import ItemRepository
 from data.repositories.partner_repo import PartnerRepository
+from domain.models.account import Account
 from domain.models.item import Item
 from domain.models.partner import Partner
+from domain.services.account_service import AccountService
 from domain.services.item_service import ItemService
 from domain.services.partner_service import PartnerService
+from ui.modals.account_modal import AccountModal
 from ui.modals.item_modal import ItemModal
 from ui.modals.partner_modal import PartnerModal
 from ui.primitives.button import Button, ButtonVariant
@@ -34,6 +38,7 @@ class DirectoryScreen(QWidget):
 
         self._partner_service = PartnerService(PartnerRepository())
         self._item_service = ItemService(ItemRepository())
+        self._account_service = AccountService(AccountRepository())
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 24)
@@ -47,10 +52,12 @@ class DirectoryScreen(QWidget):
         tabs.setObjectName("DirectoryTabs")
         tabs.addTab(self._build_partner_tab(), "Đối tác (KH/NCC)")
         tabs.addTab(self._build_item_tab(), "Vật tư / Hàng hóa")
+        tabs.addTab(self._build_account_tab(), "Hệ thống tài khoản")
         root.addWidget(tabs, 1)
 
         self._reload_partners()
         self._reload_items()
+        self._reload_accounts()
 
     # ----- Partners ----------------------------------------------------------
 
@@ -234,6 +241,90 @@ class DirectoryScreen(QWidget):
         for i in self._item_service.list_all():
             if i.id == item_id:
                 return i
+        return None
+
+    # ----- Accounts ----------------------------------------------------------
+
+    def _build_account_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 12, 0, 0)
+        layout.setSpacing(8)
+
+        toolbar = QHBoxLayout()
+        self._account_search = IconInput(
+            placeholder="Tìm theo mã / tên tài khoản…",
+            icon_name="search",
+        )
+        self._account_search.text_changed.connect(lambda _: self._reload_accounts())
+
+        btn_new = Button("Tài khoản mới", variant=ButtonVariant.PRIMARY, icon_name="plus")
+        btn_new.clicked.connect(self._on_account_new)
+
+        btn_edit = Button("Sửa", icon_name="edit")
+        btn_edit.clicked.connect(self._on_account_edit)
+
+        toolbar.addWidget(self._account_search, 1)
+        toolbar.addWidget(btn_edit)
+        toolbar.addWidget(btn_new)
+        layout.addLayout(toolbar)
+
+        self._account_table = QTableWidget(0, 4)
+        self._account_table.setHorizontalHeaderLabels(
+            ["Mã", "Tên tài khoản", "Loại", "Nguồn (TT)"]
+        )
+        self._configure_table(self._account_table)
+        self._account_table.itemDoubleClicked.connect(lambda *_: self._on_account_edit())
+        layout.addWidget(self._account_table, 1)
+
+        return widget
+
+    def _reload_accounts(self) -> None:
+        query = self._account_search.text() if hasattr(self, "_account_search") else ""
+        accounts = self._account_service.search(query)
+        self._account_table.setRowCount(0)
+        for account in accounts:
+            row = self._account_table.rowCount()
+            self._account_table.insertRow(row)
+            cells = [account.code, account.name, account.kind, account.circular]
+            for col, value in enumerate(cells):
+                table_item = QTableWidgetItem(value)
+                table_item.setFlags(table_item.flags() & ~Qt.ItemIsEditable)
+                if col == 0:
+                    table_item.setData(Qt.UserRole, account.id)
+                self._account_table.setItem(row, col, table_item)
+
+    def _on_account_new(self) -> None:
+        dialog = AccountModal(self)
+        if dialog.exec():
+            try:
+                self._account_service.create(dialog.account())
+            except Exception as exc:
+                QMessageBox.warning(self, "Không thể lưu", str(exc))
+                return
+            self._reload_accounts()
+
+    def _on_account_edit(self) -> None:
+        account = self._selected_account()
+        if account is None:
+            return
+        dialog = AccountModal(self, account=account)
+        if dialog.exec():
+            try:
+                self._account_service.update(dialog.account())
+            except Exception as exc:
+                QMessageBox.warning(self, "Không thể lưu", str(exc))
+                return
+            self._reload_accounts()
+
+    def _selected_account(self) -> Account | None:
+        row = self._account_table.currentRow()
+        if row < 0:
+            return None
+        account_id = self._account_table.item(row, 0).data(Qt.UserRole)
+        for a in self._account_service.list_all():
+            if a.id == account_id:
+                return a
         return None
 
     @staticmethod

@@ -8,6 +8,8 @@ from PySide6.QtWidgets import QApplication
 from app.config import APP_NAME, ORG_NAME
 from app.theme import apply_theme
 from data.database import init_database
+from data.repositories.account_repo import AccountRepository
+from domain.services.account_service import AccountService
 from ui.chrome.chrome_window import ChromeWindow
 
 
@@ -18,6 +20,7 @@ def main() -> int:
 
     apply_theme(app)
     init_database()
+    AccountService(AccountRepository()).ensure_seeded()
 
     window = ChromeWindow()
     window.resize(1440, 900)
