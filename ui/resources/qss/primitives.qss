@@ -240,6 +240,24 @@ QHeaderView::section {{
 }}
 QTableWidget::item {{ padding: 4px 12px; }}
 
+/* ---------- Tree (expandable journal) -------------------------------- */
+
+QTreeView, QTreeWidget {{
+    background-color: {card};
+    alternate-background-color: {card_2};
+    selection-background-color: {brand_tint_strong};
+    selection-color: {brand};
+    border: 1px solid {line};
+    border-radius: {radius}px;
+    outline: none;
+}}
+QTreeWidget::item {{
+    padding: 5px 6px;
+    border-bottom: 1px solid {line_soft};
+}}
+QTreeWidget::item:selected {{ color: {brand}; }}
+QTreeView::branch {{ background: transparent; }}
+
 /* ---------- Tabs ----------------------------------------------------- */
 
 QTabWidget::pane {{

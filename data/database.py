@@ -17,9 +17,13 @@ def get_connection() -> sqlite3.Connection:
     if _conn is None:
         with _lock:
             if _conn is None:
+                # No detect_types: TIMESTAMP columns are read back as raw ISO
+                # strings and parsed by each repo's _parse_dt (datetime.
+                # fromisoformat). The built-in sqlite3 timestamp converter is
+                # deprecated (3.12+) and crashes on the 'T' separator that
+                # .isoformat() emits.
                 _conn = sqlite3.connect(
                     DB_PATH,
-                    detect_types=sqlite3.PARSE_DECLTYPES,
                     check_same_thread=False,
                 )
                 _conn.row_factory = sqlite3.Row

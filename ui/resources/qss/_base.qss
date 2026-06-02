@@ -15,7 +15,11 @@ QWidget#MainColumn,
 QWidget#ContentStack,
 QWidget#DashboardContent,
 QWidget#DashboardScreen,
-QWidget#DirectoryScreen {{
+QWidget#DirectoryScreen,
+QWidget#JournalScreen,
+QWidget#SalesScreen,
+QWidget#InventoryScreen,
+QWidget#PlaceholderScreen {{
     background-color: {bg};
 }}
 
