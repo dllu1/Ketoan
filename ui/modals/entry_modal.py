@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QDateEdit,
     QDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -26,7 +27,6 @@ from data.repositories.account_repo import AccountRepository
 from domain.models.journal import EntryStatus, JournalEntry, JournalLine
 from domain.money import format_money, parse_money
 from ui.primitives.button import Button, ButtonVariant
-from ui.tokens import Tokens
 
 _COL_CODE, _COL_DESC, _COL_DEBIT, _COL_CREDIT = range(4)
 
@@ -49,11 +49,10 @@ class EntryModal(QDialog):
         super().__init__(parent)
         self.setObjectName("EntryModal")
         self.setModal(True)
-        self.setMinimumWidth(640)
+        self.setMinimumSize(720, 560)
         self.setWindowTitle("Bút toán mới" if entry is None else f"Sửa: {entry.ref}")
 
         self._original = entry
-        self._tokens = Tokens()
         self._status = EntryStatus.POSTED
 
         accounts = AccountRepository().list_all()
@@ -62,18 +61,41 @@ class EntryModal(QDialog):
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         completer.setFilterMode(Qt.MatchContains)
 
+        # ----- header ----------------------------------------------------
+        header_frame = QFrame()
+        header_frame.setObjectName("DialogHeader")
+        hf = QVBoxLayout(header_frame)
+        hf.setContentsMargins(0, 0, 0, 12)
+        hf.setSpacing(2)
+        title = QLabel("Bút toán mới" if entry is None else f"Sửa bút toán · {entry.ref}")
+        title.setObjectName("DialogTitle")
+        subtitle = QLabel("Định khoản Nợ / Có · Ctrl+S ghi sổ · Esc đóng")
+        subtitle.setObjectName("DialogSubtitle")
+        hf.addWidget(title)
+        hf.addWidget(subtitle)
+
         # ----- metadata --------------------------------------------------
         self._ref = QLineEdit()
+        self._ref.setPlaceholderText("VD: PKT-0034")
         self._date = QDateEdit()
         self._date.setCalendarPopup(True)
         self._date.setDisplayFormat("dd/MM/yyyy")
         self._date.setDate(QDate.currentDate())
         self._description = QLineEdit()
+        self._description.setPlaceholderText("Diễn giải chung của bút toán…")
 
         form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        form.setFormAlignment(Qt.AlignTop)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(10)
         form.addRow("Số CT *", self._ref)
         form.addRow("Ngày", self._date)
         form.addRow("Diễn giải", self._description)
+
+        grid_label = QLabel("DÒNG BÚT TOÁN (NỢ / CÓ)")
+        grid_label.setObjectName("SectionLabel")
 
         # ----- lines grid ------------------------------------------------
         self._table = QTableWidget(0, 4)
@@ -81,9 +103,22 @@ class EntryModal(QDialog):
         self._table.setItemDelegateForColumn(_COL_CODE, _AccountDelegate(completer, self))
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._table.setAlternatingRowColors(True)
+        self._table.setShowGrid(False)
+        self._table.setCornerButtonEnabled(False)
+        self._table.setMinimumHeight(180)
+        self._table.verticalHeader().setDefaultSectionSize(34)
         header = self._table.horizontalHeader()
+        header.setSectionResizeMode(_COL_CODE, QHeaderView.Fixed)
         header.setSectionResizeMode(_COL_DESC, QHeaderView.Stretch)
-        header.setSectionResizeMode(_COL_CODE, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(_COL_DEBIT, QHeaderView.Fixed)
+        header.setSectionResizeMode(_COL_CREDIT, QHeaderView.Fixed)
+        self._table.setColumnWidth(_COL_CODE, 110)
+        self._table.setColumnWidth(_COL_DEBIT, 150)
+        self._table.setColumnWidth(_COL_CREDIT, 150)
+        for col in (_COL_DEBIT, _COL_CREDIT):
+            header_item = self._table.horizontalHeaderItem(col)
+            header_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._table.itemChanged.connect(lambda *_: self._recompute_balance())
 
         line_buttons = QHBoxLayout()
@@ -101,19 +136,24 @@ class EntryModal(QDialog):
 
         # ----- footer ----------------------------------------------------
         footer = QHBoxLayout()
-        btn_cancel = Button("Hủy")
+        footer.setSpacing(8)
+        btn_cancel = Button("Hủy", variant=ButtonVariant.GHOST)
         btn_cancel.clicked.connect(self.reject)
         btn_draft = Button("Lưu nháp", icon_name="edit")
         btn_draft.clicked.connect(lambda: self._submit(EntryStatus.DRAFT))
-        btn_post = Button("Ghi sổ", variant=ButtonVariant.PRIMARY, icon_name="check")
-        btn_post.clicked.connect(lambda: self._submit(EntryStatus.POSTED))
+        self._btn_post = Button("Ghi sổ", variant=ButtonVariant.PRIMARY, icon_name="check")
+        self._btn_post.clicked.connect(lambda: self._submit(EntryStatus.POSTED))
         footer.addStretch(1)
         footer.addWidget(btn_cancel)
         footer.addWidget(btn_draft)
-        footer.addWidget(btn_post)
+        footer.addWidget(self._btn_post)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+        layout.addWidget(header_frame)
         layout.addLayout(form)
+        layout.addWidget(grid_label)
         layout.addWidget(self._table, 1)
         layout.addLayout(line_buttons)
         layout.addWidget(self._balance_label)
@@ -173,13 +213,16 @@ class EntryModal(QDialog):
         )
         diff = total_debit - total_credit
         balanced = diff == 0 and total_debit > 0
-        color = self._tokens.good if balanced else self._tokens.bad
+        flag = "✓ CÂN ĐỐI" if balanced else "✗ CHƯA CÂN"
         self._balance_label.setText(
-            f"Tổng Nợ: {format_money(total_debit)}    "
-            f"Tổng Có: {format_money(total_credit)}    "
-            f"Lệch: {format_money(diff)}"
+            f"{flag}        "
+            f"Tổng Nợ {format_money(total_debit)}   =   Tổng Có {format_money(total_credit)}"
+            f"        Lệch {format_money(diff)}"
         )
-        self._balance_label.setStyleSheet(f"color: {color}; font-weight: 600;")
+        self._balance_label.setProperty("balanced", "true" if balanced else "false")
+        self._balance_label.style().unpolish(self._balance_label)
+        self._balance_label.style().polish(self._balance_label)
+        self._btn_post.setEnabled(balanced)
 
     # ----- data in/out --------------------------------------------------
 
