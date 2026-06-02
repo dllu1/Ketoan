@@ -17,6 +17,19 @@ QPushButton[role="btn"]:hover {{
     border-color: {brand_700};
 }}
 
+/* Explicit default-variant rule: matches the specificity of the variant
+   selectors below so the resting background actually overrides the native
+   button style (the base [role="btn"] rule alone loses to it). */
+QPushButton[role="btn"][variant="default"] {{
+    background-color: {card_2};
+    color: {txt};
+    border: 1px solid {line_strong};
+}}
+QPushButton[role="btn"][variant="default"]:hover {{
+    background-color: {hover};
+    border-color: {brand_700};
+}}
+
 QPushButton[role="btn"][variant="primary"] {{
     background-color: {brand};
     color: {brand_pressed};
@@ -119,6 +132,67 @@ QComboBox::drop-down {{
     width: 18px;
 }}
 
+/* Dropdown / completer / combo popups (default Qt renders these white). */
+QListView {{
+    background-color: {card_2};
+    color: {txt};
+    border: 1px solid {line_strong};
+    border-radius: 6px;
+    outline: none;
+    padding: 2px;
+}}
+QListView::item {{
+    padding: 4px 8px;
+    min-height: 22px;
+    border-radius: 4px;
+}}
+QListView::item:selected {{
+    background-color: {brand_tint_strong};
+    color: {brand};
+}}
+QListView::item:hover {{
+    background-color: {hover};
+}}
+
+QComboBox QAbstractItemView {{
+    background-color: {card_2};
+    color: {txt};
+    border: 1px solid {line_strong};
+    border-radius: 6px;
+    outline: none;
+    selection-background-color: {brand_tint_strong};
+    selection-color: {brand};
+}}
+
+/* Calendar popup for QDateEdit (also white by default). */
+QCalendarWidget QWidget {{
+    background-color: {card_2};
+    color: {txt};
+}}
+QCalendarWidget QAbstractItemView {{
+    background-color: {card_2};
+    color: {txt};
+    selection-background-color: {brand_tint_strong};
+    selection-color: {brand};
+    outline: none;
+}}
+QCalendarWidget QAbstractItemView:disabled {{
+    color: {txt_4};
+}}
+QCalendarWidget QToolButton {{
+    background-color: transparent;
+    color: {txt};
+    border: none;
+    border-radius: 4px;
+    padding: 2px 8px;
+}}
+QCalendarWidget QToolButton:hover {{
+    background-color: {hover};
+}}
+QCalendarWidget QWidget#qt_calendar_navigationbar {{
+    background-color: {card};
+}}
+
 QFrame#IconInput {{
     background-color: {card_2};
     border: 1px solid {line};
@@ -135,6 +209,69 @@ QFrame#IconInput QLineEdit {{
     font-size: 12px;
     min-height: 28px;
 }}
+
+/* ---------- Dialogs / Modals ---------------------------------------- */
+
+QDialog {{
+    background-color: {panel_solid};
+}}
+
+/* Form-row labels and other text inside dialogs read as muted captions.
+   More specific #id rules below override this where needed. */
+QDialog QLabel {{
+    background-color: transparent;
+    color: {txt_2};
+}}
+
+QDialog QDialogButtonBox QPushButton {{
+    min-height: 28px;
+    padding: 0 16px;
+    border-radius: 6px;
+    background-color: {card_2};
+    color: {txt};
+    border: 1px solid {line_strong};
+    font-weight: 600;
+}}
+QDialog QDialogButtonBox QPushButton:hover {{
+    background-color: {hover};
+    border-color: {brand_700};
+}}
+QDialog QDialogButtonBox QPushButton:default {{
+    background-color: {brand};
+    color: {brand_pressed};
+    border-color: {brand};
+}}
+
+QFrame#DialogHeader {{
+    background-color: transparent;
+    border-bottom: 1px solid {line};
+}}
+QLabel#DialogTitle {{
+    color: {txt};
+    font-size: 15px;
+    font-weight: 700;
+}}
+QLabel#DialogSubtitle {{
+    color: {txt_3};
+    font-size: 11px;
+    font-weight: 500;
+}}
+QLabel#SectionLabel {{
+    color: {txt_3};
+    font-size: 10px;
+    font-weight: 700;
+}}
+
+QLabel#BalanceBar {{
+    background-color: {brand_tint};
+    border: 1px solid {line_strong};
+    border-radius: 6px;
+    padding: 9px 14px;
+    font-size: 12px;
+    font-weight: 700;
+}}
+QLabel#BalanceBar[balanced="true"]  {{ border-color: {good}; color: {good}; }}
+QLabel#BalanceBar[balanced="false"] {{ border-color: {bad};  color: {bad}; }}
 
 /* ---------- Card ----------------------------------------------------- */
 
@@ -228,6 +365,9 @@ QTableView, QTableWidget {{
     border: 1px solid {line};
     border-radius: {radius}px;
 }}
+QHeaderView {{
+    background-color: {card};
+}}
 QHeaderView::section {{
     background-color: {card_2};
     color: {txt_3};
@@ -237,6 +377,13 @@ QHeaderView::section {{
     padding: 6px 12px;
     font-weight: 600;
     font-size: 10px;
+}}
+/* Top-left corner where row/column headers meet. */
+QTableCornerButton::section {{
+    background-color: {card_2};
+    border: none;
+    border-right: 1px solid {line_soft};
+    border-bottom: 1px solid {line};
 }}
 QTableWidget::item {{ padding: 4px 12px; }}
 
