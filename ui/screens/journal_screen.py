@@ -1,10 +1,13 @@
 """JournalScreen: General Journal (Sổ nhật ký chung) — master/detail of entries."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from datetime import date, timedelta
+
+from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QDateEdit,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -15,10 +18,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.period import active_period
+from data.repositories.account_repo import AccountRepository
+from data.repositories.inventory_repo import InventoryRepository
+from data.repositories.invoice_repo import InvoiceRepository
+from data.repositories.item_repo import ItemRepository
 from data.repositories.journal_repo import JournalRepository
+from data.repositories.partner_repo import PartnerRepository
+from domain.models.invoice import InvoiceKind
 from domain.models.journal import EntryStatus, JournalEntry
 from domain.money import format_money
+from domain.services.inventory_service import InventoryService
 from domain.services.journal_service import JournalService
+from domain.services.purchase_service import PurchaseService
+from domain.services.sales_service import SalesService
 from ui.modals.entry_modal import EntryModal
 from ui.primitives.button import Button, ButtonVariant
 from ui.primitives.icon_input import IconInput
@@ -33,6 +46,14 @@ class JournalScreen(QWidget):
 
         self._service = JournalService(JournalRepository())
 
+        # Optional invoice routing (số hóa đơn → Bán hàng / Mua hàng tab).
+        inventory = InventoryService(InventoryRepository(), ItemRepository())
+        invoice_repo = InvoiceRepository()
+        partners = PartnerRepository()
+        accounts = AccountRepository()
+        self._sales = SalesService(invoice_repo, inventory, self._service, partners, accounts)
+        self._purchase = PurchaseService(invoice_repo, inventory, self._service, partners, accounts)
+
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 24)
         root.setSpacing(16)
@@ -43,7 +64,15 @@ class JournalScreen(QWidget):
 
         toolbar = QHBoxLayout()
         self._search = IconInput(placeholder="Tìm theo số CT / diễn giải…", icon_name="search")
-        self._search.text_changed.connect(lambda _: self._reload_entries())
+        self._search.search_changed.connect(lambda _: self._reload_entries())
+
+        # Chọn ngày tháng: lọc thêm bút toán theo khoảng ngày, khởi tạo theo
+        # kỳ kế toán đang chọn.
+        self._from = self._make_date()
+        self._to = self._make_date()
+        self._sync_dates_to_period()
+        self._from.dateChanged.connect(lambda _: self._reload_entries())
+        self._to.dateChanged.connect(lambda _: self._reload_entries())
 
         btn_new = Button("Bút toán mới", variant=ButtonVariant.PRIMARY, icon_name="plus")
         btn_new.clicked.connect(self._on_entry_new)
@@ -53,6 +82,10 @@ class JournalScreen(QWidget):
         btn_delete.clicked.connect(self._on_entry_delete)
 
         toolbar.addWidget(self._search, 1)
+        toolbar.addWidget(QLabel("Từ"))
+        toolbar.addWidget(self._from)
+        toolbar.addWidget(QLabel("đến"))
+        toolbar.addWidget(self._to)
         toolbar.addWidget(btn_edit)
         toolbar.addWidget(btn_delete)
         toolbar.addWidget(btn_new)
@@ -86,9 +119,21 @@ class JournalScreen(QWidget):
 
     # ----- entries ------------------------------------------------------
 
+    def on_activated(self) -> None:
+        self._sync_dates_to_period()
+        self._reload_entries()
+
     def _reload_entries(self) -> None:
         query = self._search.text() if hasattr(self, "_search") else ""
-        entries = self._service.search(query)
+        period = active_period()
+        start, end = self._date_range()
+        entries = [
+            e for e in self._service.search(query)
+            if period.matches(e.entry_date) and start <= e.entry_date <= end
+        ]
+        # Cache theo id để chọn dòng không phải nạp lại toàn bộ sổ từ DB mỗi lần
+        # đổi ô (currentCellChanged bắn liên tục khi dùng phím mũi tên).
+        self._entries_by_id = {e.id: e for e in entries}
         self._entry_table.setRowCount(0)
         for entry in entries:
             row = self._entry_table.rowCount()
@@ -140,6 +185,7 @@ class JournalScreen(QWidget):
             except Exception as exc:
                 QMessageBox.warning(self, "Không thể lưu", str(exc))
                 return
+            self._route_invoice(dialog)
             self._reload_entries()
 
     def _on_entry_edit(self) -> None:
@@ -153,7 +199,29 @@ class JournalScreen(QWidget):
             except Exception as exc:
                 QMessageBox.warning(self, "Không thể lưu", str(exc))
                 return
+            self._route_invoice(dialog)
             self._reload_entries()
+
+    def _route_invoice(self, dialog: EntryModal) -> None:
+        """Auto-file an optional invoice into the Bán hàng / Mua hàng tab.
+
+        Saved as a draft document; the journal entry above is the accounting
+        record. Failure here must not lose the already-saved bút toán, so it is
+        surfaced as a warning rather than raised.
+        """
+        request = dialog.invoice_request()
+        if request is None:
+            return
+        invoice, kind = request
+        service = self._sales if kind is InvoiceKind.SALE else self._purchase
+        try:
+            service.create(invoice)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Bút toán đã lưu — chưa tạo được hóa đơn",
+                f"Hóa đơn '{invoice.invoice_no}' không được tạo:\n{exc}",
+            )
 
     def _on_entry_delete(self) -> None:
         entry = self._selected_entry()
@@ -179,10 +247,44 @@ class JournalScreen(QWidget):
         if item is None:
             return None
         entry_id = item.data(Qt.UserRole)
-        for entry in self._service.list_all():
-            if entry.id == entry_id:
-                return entry
-        return None
+        return getattr(self, "_entries_by_id", {}).get(entry_id)
+
+    # ----- date range ---------------------------------------------------
+
+    @staticmethod
+    def _make_date() -> QDateEdit:
+        edit = QDateEdit()
+        edit.setCalendarPopup(True)
+        edit.setDisplayFormat("dd/MM/yyyy")
+        return edit
+
+    def _sync_dates_to_period(self) -> None:
+        """Reset the From/To pickers to the active period's bounds.
+
+        Signals are blocked so resyncing on period change doesn't fire an extra
+        reload (the caller reloads once afterwards).
+        """
+        period = active_period()
+        if period.month is None:
+            start, end = date(period.year, 1, 1), date(period.year, 12, 31)
+        else:
+            start = date(period.year, period.month, 1)
+            next_month = date(
+                period.year + (period.month == 12), period.month % 12 + 1, 1
+            )
+            end = next_month - timedelta(days=1)
+        for widget, value in ((self._from, start), (self._to, end)):
+            blocked = widget.blockSignals(True)
+            widget.setDate(QDate(value.year, value.month, value.day))
+            widget.blockSignals(blocked)
+
+    def _date_range(self) -> tuple[date, date]:
+        start = self._from.date()
+        end = self._to.date()
+        return (
+            date(start.year(), start.month(), start.day()),
+            date(end.year(), end.month(), end.day()),
+        )
 
     @staticmethod
     def _configure_table(table: QTableWidget) -> None:

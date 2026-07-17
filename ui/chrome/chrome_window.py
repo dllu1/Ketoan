@@ -6,21 +6,35 @@ from PySide6.QtGui import QKeySequence, QMouseEvent, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from app.config import APP_NAME
+from app.email_poller import EmailPoller
+from app.period import active_period, set_active_period
+from data.repositories.invoice_repo import InvoiceRepository
+from domain.models.invoice import InvoiceKind, InvoiceStatus
+from domain.services.closing_service import ClosingService
 from ui.chrome.sidebar import Sidebar
+from ui.modals.period_modal import PeriodModal
 from ui.chrome.status_bar import StatusBar
 from ui.chrome.title_bar import TitleBar
 from ui.chrome.top_bar import TopBar
+from ui.screens.assets_screen import AssetsScreen
+from ui.screens.cash_screen import CashScreen
 from ui.screens.dashboard_screen import DashboardScreen
 from ui.screens.directory_screen import DirectoryScreen
+from ui.screens.help_screen import HelpScreen
+from ui.screens.inventory_screen import InventoryScreen
 from ui.screens.journal_screen import JournalScreen
-from ui.screens.placeholder_screen import PlaceholderScreen
+from ui.screens.purchase_screen import PurchaseScreen
+from ui.screens.reports_screen import ReportsScreen
+from ui.screens.sales_screen import SalesScreen
 from ui.screens.settings_screen import SettingsScreen
+from ui.screens.tax_screen import TaxScreen
 
 
 # (key, vi, en, breadcrumb-here)
@@ -36,6 +50,7 @@ _SCREEN_META: dict[str, tuple[str, str, str]] = {
     "tax":        ("Báo cáo thuế",       "Tax Reports",                "Báo cáo thuế / Tax"),
     "directory":  ("Danh mục",           "Catalog",                    "Danh mục / Catalog"),
     "settings":   ("Cấu hình",           "Settings",                   "Cấu hình / Settings"),
+    "help":       ("Hướng dẫn sử dụng",  "User Guide",                 "Hướng dẫn / Help"),
 }
 
 
@@ -65,6 +80,7 @@ class ChromeWindow(QWidget):
         self._title_bar.minimize_clicked.connect(self.showMinimized)
         self._title_bar.maximize_clicked.connect(self._toggle_maximize)
         self._title_bar.close_clicked.connect(self.close)
+        self._title_bar.command.connect(self._handle_command)
 
         body = QWidget()
         body.setObjectName("Body")
@@ -77,10 +93,11 @@ class ChromeWindow(QWidget):
         self._sidebar.settings_requested.connect(
             lambda: self._on_module_selected("settings")
         )
-        QShortcut(QKeySequence("F9"), self,
-                  activated=lambda: self._on_module_selected("directory"))
-        QShortcut(QKeySequence("F10"), self,
-                  activated=lambda: self._on_module_selected("settings"))
+        # Bind each module's function key straight from the sidebar's own table,
+        # so the hint shown in the sidebar and the real shortcut can never drift.
+        for key, _vi, _en, _icon, shortcut, _badge in Sidebar.MODULES:
+            QShortcut(QKeySequence(shortcut), self,
+                      activated=lambda k=key: self._on_module_selected(k))
 
         main_column = QWidget()
         main_column.setObjectName("MainColumn")
@@ -89,6 +106,13 @@ class ChromeWindow(QWidget):
         col_layout.setSpacing(0)
 
         self._top_bar = TopBar()
+        self._top_bar.new_clicked.connect(self._new_journal_entry)
+        self._top_bar.search_submitted.connect(self._global_search)
+        self._top_bar.export_clicked.connect(lambda: self._on_module_selected("reports"))
+        self._top_bar.print_clicked.connect(lambda: self._on_module_selected("reports"))
+        self._top_bar.period_clicked.connect(self._show_period)
+        self._top_bar.bell_clicked.connect(self._show_notifications)
+        self._top_bar.user_clicked.connect(lambda: self._on_module_selected("settings"))
 
         self._stack = QStackedWidget()
         self._stack.setObjectName("ContentStack")
@@ -97,23 +121,22 @@ class ChromeWindow(QWidget):
             "directory": DirectoryScreen(),
             "journal": JournalScreen(),
             "settings": SettingsScreen(),
-            "sales": PlaceholderScreen(
-                title_vi="Bán hàng", title_en="Sales", icon_name="invoice", phase="Phase 3"),
-            "inventory": PlaceholderScreen(
-                title_vi="Kho hàng", title_en="Inventory", icon_name="box", phase="Phase 3"),
-            "purchase": PlaceholderScreen(
-                title_vi="Mua hàng", title_en="Purchases", icon_name="cart", phase="Phase 3"),
-            "cash": PlaceholderScreen(
-                title_vi="Quỹ & Ngân hàng", title_en="Cash & Bank", icon_name="wallet", phase="Phase 3"),
-            "assets": PlaceholderScreen(
-                title_vi="Tài sản cố định", title_en="Fixed Assets", icon_name="cube", phase="Phase 3"),
-            "reports": PlaceholderScreen(
-                title_vi="Báo cáo tài chính", title_en="Financial Reports", icon_name="chart", phase="Phase 4"),
-            "tax": PlaceholderScreen(
-                title_vi="Báo cáo thuế", title_en="Tax Reports", icon_name="tax", phase="Phase 4"),
+            "sales": SalesScreen(),
+            "inventory": InventoryScreen(),
+            "purchase": PurchaseScreen(),
+            "cash": CashScreen(),
+            "assets": AssetsScreen(),
+            "reports": ReportsScreen(),
+            "tax": TaxScreen(),
+            "help": HelpScreen(),
         }
         for screen in self._screens.values():
             self._stack.addWidget(screen)
+
+        # Inventory can ask to jump to the Catalog when there are no items yet.
+        self._screens["inventory"].navigate_requested.connect(self._on_module_selected)
+        # User-guide "Mở …" links jump straight to the documented phân hệ.
+        self._screens["help"].navigate_requested.connect(self._on_module_selected)
 
         col_layout.addWidget(self._top_bar)
         col_layout.addWidget(self._stack, 1)
@@ -127,8 +150,39 @@ class ChromeWindow(QWidget):
         root.addWidget(body, 1)
         root.addWidget(self._status_bar)
 
+        self._status_bar.set_ledger(active_period().ledger_label)
+        self._top_bar.set_period(active_period())
+
         self._on_module_selected("dashboard")
         self._sidebar.set_active("dashboard")
+
+        self._check_year_closing()
+
+        # Nền: tự lấy HĐĐT từ hộp thư nếu người dùng đã bật trong Cấu hình.
+        self._email_poller = EmailPoller(self)
+        self._email_poller.imported.connect(self._on_email_imported)
+        self._email_poller.start()
+
+    def _check_year_closing(self) -> None:
+        """On launch: auto-close years overdue >48h and remind about pending ones."""
+        closing = ClosingService()
+        auto_closed = closing.auto_close_overdue()
+        if auto_closed:
+            years = ", ".join(str(y) for y in auto_closed)
+            QMessageBox.information(
+                self, "Tự động chốt sổ",
+                f"Đã quá 48 giờ kể từ cuối năm mà chưa chốt sổ.\n"
+                f"Hệ thống đã tự động chốt sổ năm: {years}.",
+            )
+        pending = closing.years_awaiting_close()
+        if pending:
+            years = ", ".join(str(y) for y in pending)
+            QMessageBox.warning(
+                self, "Nhắc chốt sổ",
+                f"Năm {years} đã kết thúc nhưng chưa được chốt sổ.\n"
+                "Vào Cấu hình › Chốt sổ cuối năm để chốt. Nếu không, hệ thống sẽ "
+                "tự động chốt sau 48 giờ kể từ cuối năm.",
+            )
 
     def _toggle_maximize(self) -> None:
         if self.isMaximized():
@@ -146,11 +200,117 @@ class ChromeWindow(QWidget):
         self._stack.setCurrentWidget(screen)
         self._sidebar.set_active(key)
 
+        # Let a screen refresh itself from the live ledger each time it's shown.
+        on_activated = getattr(screen, "on_activated", None)
+        if callable(on_activated):
+            on_activated()
+        self._status_bar.mark_synced()
+        self._refresh_sales_badge()
+
         meta = _SCREEN_META.get(key)
         if meta:
             vi, en, breadcrumb = meta
             self._top_bar.set_screen_title(vi, en)
             self._title_bar.set_breadcrumb(breadcrumb)
+
+    def _refresh_sales_badge(self) -> None:
+        """Badge the Sales module with the count of unposted (draft) invoices."""
+        drafts = sum(
+            1 for inv in InvoiceRepository().list_all(InvoiceKind.SALE)
+            if inv.status is InvoiceStatus.DRAFT
+        )
+        self._sidebar.set_badge("sales", drafts)
+
+    def _on_email_imported(self, result) -> None:
+        """HĐĐT vừa được nền nhập về → làm tươi Bán/Mua hàng + badge + trạng thái."""
+        for key in ("sales", "purchase"):
+            screen = self._screens.get(key)
+            on_activated = getattr(screen, "on_activated", None)
+            if callable(on_activated):
+                on_activated()
+        self._refresh_sales_badge()
+        self._status_bar.mark_synced()
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt signature)
+        poller = getattr(self, "_email_poller", None)
+        if poller is not None:
+            poller.stop()
+        super().closeEvent(event)
+
+    # ----- title-bar / top-bar commands ------------------------------------
+
+    def _handle_command(self, cmd: str) -> None:
+        if cmd.startswith("go:"):
+            self._on_module_selected(cmd[3:])
+        elif cmd == "new":
+            self._new_journal_entry()
+        elif cmd == "search":
+            self._top_bar.search_input().line_edit().setFocus()
+        elif cmd == "close":
+            self.close()
+        elif cmd == "shortcuts":
+            self._show_shortcuts()
+        elif cmd == "about":
+            self._show_about()
+
+    def _new_journal_entry(self) -> None:
+        self._on_module_selected("journal")
+        journal = self._screens.get("journal")
+        if journal is not None:
+            journal._on_entry_new()
+        self._refresh_sales_badge()
+
+    def _global_search(self, text: str) -> None:
+        query = text.strip()
+        if not query:
+            return
+        self._on_module_selected("journal")
+        journal = self._screens.get("journal")
+        if journal is not None:
+            journal._search.set_text(query)
+
+    def _show_period(self) -> None:
+        dialog = PeriodModal(self, current=active_period())
+        if not dialog.exec():
+            return
+        period = dialog.period()
+        set_active_period(period)
+        self._top_bar.set_period(period)
+        self._status_bar.set_ledger(period.ledger_label)
+        # Re-filter whatever screen is showing against the new period.
+        current = self._stack.currentWidget()
+        on_activated = getattr(current, "on_activated", None)
+        if callable(on_activated):
+            on_activated()
+
+    def _show_notifications(self) -> None:
+        sales = InvoiceRepository().list_all(InvoiceKind.SALE)
+        drafts = sum(1 for i in sales if i.status is InvoiceStatus.DRAFT)
+        QMessageBox.information(
+            self, "Thông báo",
+            f"• {drafts} đơn hàng chưa ghi sổ đang chờ xử lý.\n"
+            f"• Kỳ kế toán: {active_period().label}.\n"
+            "• Nhớ lập tờ khai thuế GTGT cuối kỳ.",
+        )
+
+    def _show_shortcuts(self) -> None:
+        QMessageBox.information(
+            self, "Phím tắt",
+            "F2–F10: chuyển phân hệ\n"
+            "Ctrl+N: Bút toán mới\n"
+            "Ctrl+I: Hóa đơn GTGT\n"
+            "Ctrl+K: Tìm kiếm\n"
+            "Ctrl+S: Lưu / Ghi sổ\n"
+            "Esc: Đóng hộp thoại",
+        )
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self, "Giới thiệu",
+            "<b>Hưng Phát · Accounting Suite</b><br>"
+            "Phần mềm kế toán theo Thông tư 200/133-BTC.<br><br>"
+            "© Hưng Phát M&E · v3.2.0-py",
+        )
 
     # --- frameless resize handling -----------------------------------------
 

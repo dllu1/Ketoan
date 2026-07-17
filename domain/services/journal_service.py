@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from data.repositories.journal_repo import JournalRepository
 from domain.models.journal import EntryStatus, JournalEntry
+from domain.services.closing_service import ClosingService
 
 
 class JournalValidationError(ValueError):
@@ -13,8 +14,18 @@ class JournalValidationError(ValueError):
 
 
 class JournalService:
-    def __init__(self, repo: JournalRepository) -> None:
+    def __init__(
+        self, repo: JournalRepository, closing: ClosingService | None = None
+    ) -> None:
         self._repo = repo
+        self._closing = closing
+
+    @property
+    def _closer(self) -> ClosingService:
+        # Lazy so constructing the service never opens a DB connection on import.
+        if self._closing is None:
+            self._closing = ClosingService()
+        return self._closing
 
     def list_all(self) -> list[JournalEntry]:
         return self._repo.list_all()
@@ -22,8 +33,22 @@ class JournalService:
     def search(self, query: str) -> list[JournalEntry]:
         return self._repo.search(query.strip())
 
+    def find_by_ref(self, ref: str) -> JournalEntry | None:
+        return self._repo.find_by_ref(ref)
+
+    def delete_by_ref(self, ref: str) -> None:
+        """Remove an entry by ref regardless of status.
+
+        Used to reverse system-generated postings (vd: khi xóa/sửa lại hóa đơn);
+        the POSTED guard in :meth:`delete` only protects manual entries.
+        """
+        entry = self._repo.find_by_ref(ref)
+        if entry is not None:
+            self._repo.delete(entry.id)
+
     def create(self, entry: JournalEntry) -> JournalEntry:
         self._validate(entry)
+        self._closer.ensure_open(entry.entry_date)
         if self._repo.find_by_ref(entry.ref):
             raise JournalValidationError(f"Số chứng từ '{entry.ref}' đã tồn tại.")
         entry.created_at = datetime.now()
@@ -34,6 +59,7 @@ class JournalService:
         if entry.id is None:
             raise JournalValidationError("Không thể cập nhật bút toán chưa được lưu.")
         self._validate(entry)
+        self._closer.ensure_open(entry.entry_date)
         entry.updated_at = datetime.now()
         return self._repo.update(entry)
 
@@ -41,10 +67,9 @@ class JournalService:
         entry = self._find(entry_id)
         if entry is None:
             raise JournalValidationError("Không tìm thấy bút toán.")
-        if entry.status is EntryStatus.POSTED:
-            raise JournalValidationError(
-                "Bút toán đã ghi sổ không thể xóa — hãy tạo bút toán đảo ngược."
-            )
+        # Documents stay editable/deletable all year; the only lock is the
+        # year-end closing (chốt sổ), not per-entry posting status.
+        self._closer.ensure_open(entry.entry_date)
         self._repo.delete(entry_id)
 
     def _find(self, entry_id: int) -> JournalEntry | None:

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.period import Period, active_period
 from ui.icons import icon as make_icon
 from ui.primitives.button import Button, ButtonVariant
 from ui.primitives.icon_input import IconInput
@@ -96,10 +97,10 @@ class TopBar(QFrame):
         col.setSpacing(1)
         lab = QLabel("KỲ KẾ TOÁN")
         lab.setObjectName("TopBarPeriodLabel")
-        val = QLabel("01 / 2026")
-        val.setObjectName("TopBarPeriodValue")
+        self._period_value = QLabel(active_period().short_label)
+        self._period_value.setObjectName("TopBarPeriodValue")
         col.addWidget(lab)
-        col.addWidget(val)
+        col.addWidget(self._period_value)
 
         chev = QLabel()
         chev.setPixmap(make_icon("chevron-down", color="#7e8da3").pixmap(QSize(12, 12)))
@@ -158,7 +159,7 @@ class TopBar(QFrame):
         layout.setContentsMargins(10, 0, 8, 0)
         layout.setSpacing(10)
 
-        av = QLabel("NMA")
+        av = QLabel("LMN")
         av.setObjectName("TopBarUserAvatar")
         av.setFixedSize(QSize(24, 24))
         av.setAlignment(Qt.AlignCenter)
@@ -166,9 +167,9 @@ class TopBar(QFrame):
         col = QVBoxLayout()
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
-        name = QLabel("N.M.Anh")
+        name = QLabel("L.M.Nghĩa")
         name.setObjectName("TopBarUserName")
-        role = QLabel("Kế toán trưởng")
+        role = QLabel("Kế toán")
         role.setObjectName("TopBarUserRole")
         col.addWidget(name)
         col.addWidget(role)
@@ -189,3 +190,10 @@ class TopBar(QFrame):
     def set_screen_title(self, vi: str, en: str) -> None:
         self._title_vi.setText(vi)
         self._title_en.setText(en.upper())
+
+    def set_period(self, period: Period) -> None:
+        self._period_value.setText(period.short_label)
+
+    def search_input(self) -> IconInput:
+        """The global search box — focused by the Ctrl+K "search" command."""
+        return self._search

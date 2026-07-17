@@ -92,15 +92,25 @@ def test_line_with_both_debit_and_credit_rejected(in_memory_db):
         service.create(entry)
 
 
-def test_delete_draft_but_not_posted(in_memory_db):
-    from domain.services.journal_service import JournalValidationError
-
+def test_delete_allowed_while_year_open(in_memory_db):
+    # New model: documents stay editable/deletable all year — the only lock is
+    # the year-end closing, not per-entry posting status.
     service = _service(in_memory_db)
     draft = service.create(_balanced(ref="PKT-D", status=EntryStatus.DRAFT))
     posted = service.create(_balanced(ref="PKT-P"))
 
     service.delete(draft.id)
-    assert all(e.id != draft.id for e in service.list_all())
+    service.delete(posted.id)
+    assert service.list_all() == []
 
-    with pytest.raises(JournalValidationError):
+
+def test_delete_blocked_after_year_closed(in_memory_db):
+    from data.repositories.closing_repo import ClosingRepository
+    from domain.services.closing_service import ClosingError
+
+    service = _service(in_memory_db)
+    posted = service.create(_balanced(ref="PKT-P"))
+
+    ClosingRepository(in_memory_db).close(2026)  # entry_date is in 2026
+    with pytest.raises(ClosingError):
         service.delete(posted.id)

@@ -16,3 +16,12 @@ dist/
 Hung-Phat-Components.md
 plan.md
 components
+
+# Test temp dir (Windows: pytest needs --basetemp=.pytest_tmp)
+.pytest_tmp/
+
+# Personal working notes
+LEARN_Reflection_Ketoan_Phase2.md
+
+# Invoices / business PDFs — never publish real financial documents
+*.pdf

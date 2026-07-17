@@ -1,7 +1,7 @@
 """Input wrapper with a leading icon and optional trailing Kbd hint."""
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -13,9 +13,14 @@ from PySide6.QtWidgets import (
 from ui.icons import icon as make_icon
 from ui.primitives.kbd import Kbd
 
+# Độ trễ gõ phím trước khi phát search_changed (ms). Đủ ngắn để thấy tức thì,
+# đủ dài để không nạp lại bảng/DB sau mỗi ký tự khi người dùng đang gõ nhanh.
+_DEBOUNCE_MS = 180
+
 
 class IconInput(QFrame):
-    text_changed = Signal(str)
+    text_changed = Signal(str)          # phát ngay mỗi ký tự (validate trực tiếp)
+    search_changed = Signal(str)        # phát sau khi ngừng gõ (nạp/lọc dữ liệu)
     returned = Signal()
 
     def __init__(
@@ -43,6 +48,19 @@ class IconInput(QFrame):
         self._line.setPlaceholderText(placeholder)
         self._line.textChanged.connect(self.text_changed.emit)
         self._line.returnPressed.connect(self.returned.emit)
+
+        # Gom nhiều lần gõ liên tiếp thành một lần phát search_changed.
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(_DEBOUNCE_MS)
+        self._debounce.timeout.connect(
+            lambda: self.search_changed.emit(self._line.text())
+        )
+        self._line.textChanged.connect(lambda _: self._debounce.start())
+        # Enter → tìm ngay, không đợi debounce.
+        self._line.returnPressed.connect(
+            lambda: (self._debounce.stop(), self.search_changed.emit(self._line.text()))
+        )
 
         layout.addWidget(self._icon_label)
         layout.addWidget(self._line, 1)

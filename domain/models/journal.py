@@ -19,6 +19,9 @@ class JournalLine:
     description: str = ""
     debit: Decimal = field(default_factory=lambda: Decimal("0"))
     credit: Decimal = field(default_factory=lambda: Decimal("0"))
+    # Đối tượng công nợ (mã khách hàng / nhà cung cấp) cho dòng này — dùng cho
+    # các TK theo dõi chi tiết như 131 / 331. Rỗng nếu không gắn đối tượng.
+    partner_code: str = ""
     line_no: int = 0
     id: int | None = None
     entry_id: int | None = None

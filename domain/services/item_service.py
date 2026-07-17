@@ -36,8 +36,17 @@ class ItemService:
         if item.id is None:
             raise ItemValidationError("Không thể cập nhật vật tư chưa được lưu.")
         self._validate(item)
+        # Mã vật tư có thể sửa — chặn trùng với một mặt hàng khác.
+        existing = self._repo.find_by_code(item.code)
+        if existing is not None and existing.id != item.id:
+            raise ItemValidationError(f"Mã '{item.code}' đã tồn tại.")
         item.updated_at = datetime.now()
         return self._repo.update(item)
+
+    def delete(self, item: Item) -> None:
+        if item.id is None:
+            raise ItemValidationError("Không thể xóa vật tư chưa được lưu.")
+        self._repo.delete(item.id)
 
     @staticmethod
     def _validate(item: Item) -> None:

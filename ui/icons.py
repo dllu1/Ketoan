@@ -389,6 +389,24 @@ def _menu(p: QPainter, r: QRectF) -> None:
         _line(p, o.x() + 5 * s, o.y() + y * s, o.x() + 19 * s, o.y() + y * s)
 
 
+def _help(p: QPainter, r: QRectF) -> None:
+    s = r.width() / 24
+    o = r.topLeft()
+    _circle(p, o.x() + 12 * s, o.y() + 12 * s, 9 * s)
+    _polyline(
+        p,
+        (o.x() + 9 * s, o.y() + 9.5 * s),
+        (o.x() + 10 * s, o.y() + 8 * s),
+        (o.x() + 12 * s, o.y() + 7.5 * s),
+        (o.x() + 14 * s, o.y() + 8.5 * s),
+        (o.x() + 14.5 * s, o.y() + 10.5 * s),
+        (o.x() + 13 * s, o.y() + 12 * s),
+        (o.x() + 12 * s, o.y() + 13 * s),
+        (o.x() + 12 * s, o.y() + 14.5 * s),
+    )
+    _circle(p, o.x() + 12 * s, o.y() + 17 * s, 0.5 * s)
+
+
 def _sparkle(p: QPainter, r: QRectF) -> None:
     s = r.width() / 24
     o = r.topLeft()
@@ -442,6 +460,7 @@ _DRAWERS: dict[str, Drawer] = {
     "user": _user,
     "list": _list_,
     "menu": _menu,
+    "help": _help,
     "sparkle": _sparkle,
     "min": _minus,
     "max": _box,

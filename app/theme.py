@@ -4,16 +4,34 @@ from __future__ import annotations
 from dataclasses import asdict
 from enum import Enum
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication
 
 from app.config import FONTS_DIR, QSS_DIR
-from ui.tokens import Tokens, active_tokens, set_active_tokens
+from ui.tokens import Tokens, set_active_tokens, tokens_for_mode
 
 _QSS_FILES: tuple[str, ...] = ("_base.qss", "chrome.qss", "primitives.qss")
 
+_THEME_KEY = "theme/mode"
 _loaded_family: str | None = None
+
+
+def current_mode() -> str:
+    """Persisted theme mode — ``"light"`` (default) or ``"dark"``."""
+    value = QSettings().value(_THEME_KEY, "light")
+    return "dark" if str(value).lower() == "dark" else "light"
+
+
+def set_mode(app: QApplication, mode: str) -> None:
+    """Persist the chosen mode and re-apply the theme app-wide at runtime."""
+    mode = "dark" if str(mode).lower() == "dark" else "light"
+    QSettings().setValue(_THEME_KEY, mode)
+    apply_theme(app, tokens_for_mode(mode))
+    # QSS restyles every widget, but custom-painted widgets (status bar,
+    # charts) only repaint on their next update — force one now.
+    for widget in app.allWidgets():
+        widget.update()
 
 
 def apply_theme(app: QApplication, tokens: Tokens | None = None) -> None:
@@ -21,7 +39,7 @@ def apply_theme(app: QApplication, tokens: Tokens | None = None) -> None:
     global _loaded_family
     _loaded_family = _load_fonts()
     if tokens is None:
-        tokens = active_tokens()
+        tokens = tokens_for_mode(current_mode())
 
     # Force the loaded family name into the tokens so QSS templates and
     # QPainter both reference the same font that QFontDatabase registered.

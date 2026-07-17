@@ -90,7 +90,52 @@ class Tokens:
         return replace(self, **overrides)
 
 
-_active: Tokens = Tokens()
+# ----- theme palettes ------------------------------------------------------
+# The default Tokens() above is the dark palette. LIGHT_TOKENS overrides only
+# the colour fields; typography/layout keep their defaults so QSS templates
+# render identically in either mode.
+
+DARK_TOKENS: Tokens = Tokens()
+
+LIGHT_TOKENS: Tokens = Tokens(
+    brand="#2f6fed",
+    brand_300="#9cc0fb",
+    brand_400="#6ea1f8",
+    brand_500="#2f6fed",
+    brand_600="#2563d4",
+    brand_700="#1f55b8",
+    brand_800="#1b4aa0",
+    brand_900="#163d85",
+    brand_tint="#e9f1fe",
+    brand_tint_strong="#d6e6fd",
+    brand_pressed="#ffffff",          # text on brand-filled surfaces (light mode)
+    good="#1f9d57",
+    warn="#b6790a",
+    bad="#d24a3a",
+    bg="#f3f5f9",
+    panel="#ffffff",
+    panel_solid="#ffffff",
+    card="#ffffff",
+    card_2="#eef1f6",
+    elevated="#ffffff",
+    txt="#16202e",
+    txt_2="#3c4858",
+    txt_3="#6b7686",
+    txt_4="#9aa4b2",
+    line="#dde3ec",
+    line_strong="#c4cdda",
+    line_soft="#e9edf3",
+    hover="#eef2f8",
+    active="#dfeafc",
+)
+
+
+def tokens_for_mode(mode: str) -> Tokens:
+    """Return the palette for ``"light"`` / ``"dark"`` (default light)."""
+    return DARK_TOKENS if str(mode).lower() == "dark" else LIGHT_TOKENS
+
+
+_active: Tokens = LIGHT_TOKENS
 
 
 def active_tokens() -> Tokens:

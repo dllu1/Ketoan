@@ -93,7 +93,8 @@ class PartnerModal(QDialog):
         partner = self._original or Partner(code="", name="")
         partner.code = self._code.text().strip()
         partner.name = self._name.text().strip()
-        partner.type = self._type.currentData()
+        # Coerce: Qt returns str-based enum userData as a plain str.
+        partner.type = PartnerType(self._type.currentData())
         partner.tax_code = self._tax_code.text().strip()
         partner.phone = self._phone.text().strip()
         partner.email = self._email.text().strip()

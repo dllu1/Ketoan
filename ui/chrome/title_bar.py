@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QWidget,
@@ -21,17 +22,49 @@ class TitleBar(QFrame):
     minimize_clicked = Signal()
     maximize_clicked = Signal()
     close_clicked = Signal()
-    menu_opened = Signal(str)
+    # Emitted with a command key when a menu item is chosen (see _MENU_ACTIONS).
+    command = Signal(str)
 
-    MENUS: tuple[str, ...] = (
-        "Tệp / File",
-        "Hệ thống",
-        "Danh mục",
-        "Nghiệp vụ",
-        "Báo cáo",
-        "Tiện ích",
-        "Trợ giúp",
-    )
+    # menu label -> list of (item label, command) | None (separator)
+    _MENU_ACTIONS: dict[str, list] = {
+        "Tệp / File": [
+            ("Bút toán mới", "new"),
+            ("Hóa đơn bán hàng", "go:sales"),
+            None,
+            ("Xuất báo cáo…", "go:reports"),
+            None,
+            ("Thoát", "close"),
+        ],
+        "Hệ thống": [
+            ("Cấu hình", "go:settings"),
+            ("Làm mới Tổng quan", "go:dashboard"),
+        ],
+        "Danh mục": [
+            ("Khách hàng / Nhà cung cấp", "go:directory"),
+            ("Vật tư & Hàng hóa", "go:directory"),
+        ],
+        "Nghiệp vụ": [
+            ("Sổ nhật ký chung", "go:journal"),
+            ("Bán hàng", "go:sales"),
+            ("Mua hàng", "go:purchase"),
+            ("Kho hàng", "go:inventory"),
+            ("Quỹ & Ngân hàng", "go:cash"),
+            ("Tài sản cố định", "go:assets"),
+        ],
+        "Báo cáo": [
+            ("Báo cáo tài chính", "go:reports"),
+            ("Báo cáo thuế", "go:tax"),
+        ],
+        "Tiện ích": [
+            ("Tìm kiếm nhanh", "search"),
+            ("Cấu hình", "go:settings"),
+        ],
+        "Trợ giúp": [
+            ("Phím tắt", "shortcuts"),
+            ("Giới thiệu", "about"),
+        ],
+    }
+    MENUS = tuple(_MENU_ACTIONS)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -90,9 +123,34 @@ class TitleBar(QFrame):
             btn.setCursor(Qt.PointingHandCursor)
             btn.setFlat(True)
             btn.setMinimumHeight(self.HEIGHT)
-            btn.clicked.connect(lambda _=False, n=name: self.menu_opened.emit(n))
+            btn.clicked.connect(lambda _=False, n=name, b=btn: self._show_menu(n, b))
             layout.addWidget(btn)
         return wrap
+
+    def _show_menu(self, name: str, anchor: QPushButton) -> None:
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu {"
+            " background-color: #121925;"
+            " color: #e6edf3;"
+            " border: 1px solid #1f2a3a;"
+            " padding: 4px;"
+            "}"
+            "QMenu::item {"
+            " padding: 6px 20px;"
+            " border-radius: 4px;"
+            " color: #e6edf3;"
+            "}"
+            "QMenu::item:selected { background-color: #1f2937; color: #ffffff; }"
+            "QMenu::separator { height: 1px; background: #1f2a3a; margin: 4px 8px; }"
+        )
+        for entry in self._MENU_ACTIONS.get(name, []):
+            if entry is None:
+                menu.addSeparator()
+                continue
+            label, cmd = entry
+            menu.addAction(label, lambda c=cmd: self.command.emit(c))
+        menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
 
     def _build_breadcrumb(self) -> QWidget:
         wrap = QFrame()

@@ -31,6 +31,7 @@ def _row_to_line(row: sqlite3.Row) -> JournalLine:
         description=row["description"],
         debit=Decimal(str(row["debit"])),
         credit=Decimal(str(row["credit"])),
+        partner_code=row["partner_code"],
     )
 
 
@@ -48,7 +49,19 @@ class JournalRepository:
         rows = self._conn.execute(
             "SELECT * FROM journal_entry ORDER BY entry_date DESC, id DESC"
         ).fetchall()
-        return [self._hydrate(_row_to_entry(r)) for r in rows]
+        entries = [_row_to_entry(r) for r in rows]
+        # Một truy vấn lấy toàn bộ dòng (tránh N+1: trước đây mỗi bút toán một
+        # query). Báo cáo quét cả sổ nên đây là điểm tăng tốc lớn nhất.
+        by_id = {e.id: e for e in entries}
+        for entry in entries:
+            entry.lines = []
+        for line_row in self._conn.execute(
+            "SELECT * FROM journal_line ORDER BY entry_id, line_no"
+        ):
+            entry = by_id.get(line_row["entry_id"])
+            if entry is not None:
+                entry.lines.append(_row_to_line(line_row))
+        return entries
 
     def search(self, query: str) -> list[JournalEntry]:
         if not query:
@@ -59,7 +72,7 @@ class JournalRepository:
             "ORDER BY entry_date DESC, id DESC",
             (like, like),
         ).fetchall()
-        return [self._hydrate(_row_to_entry(r)) for r in rows]
+        return self._attach_lines([_row_to_entry(r) for r in rows])
 
     def list_lines(self, entry_id: int) -> list[JournalLine]:
         rows = self._conn.execute(
@@ -127,6 +140,28 @@ class JournalRepository:
         entry.lines = self.list_lines(entry.id)
         return entry
 
+    def _attach_lines(self, entries: list[JournalEntry]) -> list[JournalEntry]:
+        """Nạp dòng cho nhiều bút toán bằng truy vấn gộp (tránh N+1).
+
+        Chia lô tham số IN(...) để không vượt giới hạn biến của SQLite khi danh
+        sách rất dài.
+        """
+        by_id = {e.id: e for e in entries}
+        for entry in entries:
+            entry.lines = []
+        ids = list(by_id)
+        for start in range(0, len(ids), 900):
+            chunk = ids[start:start + 900]
+            placeholders = ",".join("?" * len(chunk))
+            rows = self._conn.execute(
+                f"SELECT * FROM journal_line WHERE entry_id IN ({placeholders}) "
+                "ORDER BY entry_id, line_no",
+                tuple(chunk),
+            ).fetchall()
+            for line_row in rows:
+                by_id[line_row["entry_id"]].lines.append(_row_to_line(line_row))
+        return entries
+
     def _insert_lines(self, entry: JournalEntry) -> None:
         for index, line in enumerate(entry.lines):
             line.entry_id = entry.id
@@ -135,11 +170,12 @@ class JournalRepository:
                 """
                 INSERT INTO journal_line (
                     entry_id, line_no, account_code, account_name,
-                    description, debit, credit
-                ) VALUES (?,?,?,?,?,?,?)
+                    description, debit, credit, partner_code
+                ) VALUES (?,?,?,?,?,?,?,?)
                 """,
                 (
                     entry.id, index, line.account_code, line.account_name,
                     line.description, str(line.debit), str(line.credit),
+                    line.partner_code,
                 ),
             )

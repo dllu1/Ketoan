@@ -65,6 +65,18 @@ class PartnerRepository:
         ).fetchone()
         return _row_to_partner(row) if row else None
 
+    def find_by_tax_code(self, tax_code: str) -> Partner | None:
+        """Đối chiếu đối tác theo MST — khóa tự nhiên của HĐĐT nhập từ email."""
+        tax_code = (tax_code or "").strip()
+        if not tax_code:
+            return None
+        row = self._conn.execute(
+            "SELECT * FROM partner WHERE tax_code = ? AND tax_code != '' "
+            "ORDER BY id LIMIT 1",
+            (tax_code,),
+        ).fetchone()
+        return _row_to_partner(row) if row else None
+
     def insert(self, partner: Partner) -> Partner:
         with self._conn:
             cursor = self._conn.execute(

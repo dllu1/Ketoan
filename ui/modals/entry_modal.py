@@ -7,6 +7,7 @@ from decimal import Decimal
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QCompleter,
     QDateEdit,
     QDialog,
@@ -24,6 +25,8 @@ from PySide6.QtWidgets import (
 )
 
 from data.repositories.account_repo import AccountRepository
+from data.repositories.item_repo import ItemRepository
+from domain.models.invoice import Invoice, InvoiceKind, InvoiceLine, InvoiceStatus
 from domain.models.journal import EntryStatus, JournalEntry, JournalLine
 from domain.money import format_money, parse_money
 from ui.primitives.button import Button, ButtonVariant
@@ -49,7 +52,7 @@ class EntryModal(QDialog):
         super().__init__(parent)
         self.setObjectName("EntryModal")
         self.setModal(True)
-        self.setMinimumSize(720, 560)
+        self.setMinimumSize(760, 640)
         self.setWindowTitle("Bút toán mới" if entry is None else f"Sửa: {entry.ref}")
 
         self._original = entry
@@ -61,6 +64,8 @@ class EntryModal(QDialog):
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         completer.setFilterMode(Qt.MatchContains)
 
+        self._items = {i.code: i for i in ItemRepository().list_all()}
+
         # ----- header ----------------------------------------------------
         header_frame = QFrame()
         header_frame.setObjectName("DialogHeader")
@@ -69,7 +74,7 @@ class EntryModal(QDialog):
         hf.setSpacing(2)
         title = QLabel("Bút toán mới" if entry is None else f"Sửa bút toán · {entry.ref}")
         title.setObjectName("DialogTitle")
-        subtitle = QLabel("Định khoản Nợ / Có · Ctrl+S ghi sổ · Esc đóng")
+        subtitle = QLabel("Định khoản Nợ / Có · Ctrl+S lưu · Esc đóng")
         subtitle.setObjectName("DialogSubtitle")
         hf.addWidget(title)
         hf.addWidget(subtitle)
@@ -93,6 +98,58 @@ class EntryModal(QDialog):
         form.addRow("Số CT *", self._ref)
         form.addRow("Ngày", self._date)
         form.addRow("Diễn giải", self._description)
+
+        # ----- optional invoice + goods (auto-routed to Bán hàng / Mua hàng) --
+        # Two compact columns so the optional block doesn't crowd the dialog.
+        optional_label = QLabel("CHỨNG TỪ KÈM THEO (tùy chọn) · nhập Số hóa đơn để tự đẩy sang Bán/Mua hàng")
+        optional_label.setObjectName("SectionLabel")
+
+        self._invoice_no = QLineEdit()
+        self._invoice_no.setPlaceholderText("Để trống nếu không kèm")
+        self._invoice_kind = QComboBox()
+        self._invoice_kind.addItem("Bán hàng (đầu ra)", InvoiceKind.SALE)
+        self._invoice_kind.addItem("Mua hàng (đầu vào)", InvoiceKind.PURCHASE)
+        self._invoice_kind.setEnabled(False)
+        self._invoice_no.textChanged.connect(
+            lambda text: self._invoice_kind.setEnabled(bool(text.strip()))
+        )
+
+        invoice_form = QFormLayout()
+        invoice_form.setHorizontalSpacing(12)
+        invoice_form.setVerticalSpacing(8)
+        invoice_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        invoice_form.addRow("Số hóa đơn", self._invoice_no)
+        invoice_form.addRow("Loại", self._invoice_kind)
+
+        self._item_code = QLineEdit()
+        self._item_code.setPlaceholderText("VD: HH001")
+        item_completer = QCompleter(list(self._items), self)
+        item_completer.setCaseSensitivity(Qt.CaseInsensitive)
+        item_completer.setFilterMode(Qt.MatchContains)
+        self._item_code.setCompleter(item_completer)
+        self._item_code.editingFinished.connect(self._autofill_item)
+        self._item_name = QLineEdit()
+        self._item_name.setPlaceholderText("Tên hàng hóa…")
+        self._item_qty = QLineEdit()
+        self._item_qty.setPlaceholderText("0")
+        self._item_qty.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._item_price = QLineEdit()
+        self._item_price.setPlaceholderText("0")
+        self._item_price.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+        goods_form = QFormLayout()
+        goods_form.setHorizontalSpacing(12)
+        goods_form.setVerticalSpacing(8)
+        goods_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        goods_form.addRow("Mã vật tư", self._item_code)
+        goods_form.addRow("Tên hàng", self._item_name)
+        goods_form.addRow("Số lượng", self._item_qty)
+        goods_form.addRow("Đơn giá", self._item_price)
+
+        optional_row = QHBoxLayout()
+        optional_row.setSpacing(24)
+        optional_row.addLayout(invoice_form, 1)
+        optional_row.addLayout(goods_form, 1)
 
         grid_label = QLabel("DÒNG BÚT TOÁN (NỢ / CÓ)")
         grid_label.setObjectName("SectionLabel")
@@ -153,6 +210,8 @@ class EntryModal(QDialog):
         layout.setSpacing(12)
         layout.addWidget(header_frame)
         layout.addLayout(form)
+        layout.addWidget(optional_label)
+        layout.addLayout(optional_row)
         layout.addWidget(grid_label)
         layout.addWidget(self._table, 1)
         layout.addLayout(line_buttons)
@@ -237,6 +296,22 @@ class EntryModal(QDialog):
         qd = self._date.date()
         return date(qd.year(), qd.month(), qd.day())
 
+    def _autofill_item(self) -> None:
+        """Fill name / price from the directory when a known mã vật tư is typed."""
+        product = self._items.get(self._item_code.text().strip())
+        if product is None:
+            return
+        if not self._item_name.text().strip():
+            self._item_name.setText(product.name)
+        if not self._item_price.text().strip():
+            self._item_price.setText(format_money(product.unit_price))
+
+    def _parse_amount(self, line_edit: QLineEdit) -> Decimal:
+        try:
+            return parse_money(line_edit.text())
+        except ValueError:
+            return Decimal("0")
+
     def _submit(self, status: EntryStatus) -> None:
         self._status = status
         self.accept()
@@ -264,3 +339,38 @@ class EntryModal(QDialog):
                 )
             )
         return entry
+
+    def invoice_request(self) -> tuple[Invoice, InvoiceKind] | None:
+        """Optional invoice to route into the Bán hàng / Mua hàng tab.
+
+        Returns ``None`` unless the user filled in a số hóa đơn — that field is
+        the trigger. The invoice is built as a DRAFT (no posting) so it appears
+        in the matching tab as a document without double-counting the journal
+        entry the user already typed here; they can ghi sổ it from that tab.
+        """
+        invoice_no = self._invoice_no.text().strip()
+        if not invoice_no:
+            return None
+        # Coerce: Qt returns str-based enum userData as a plain str, which would
+        # make `kind is InvoiceKind.SALE` (in journal_screen) always false.
+        kind = InvoiceKind(self._invoice_kind.currentData())
+        product = self._items.get(self._item_code.text().strip())
+        line = InvoiceLine(
+            item_code=self._item_code.text().strip(),
+            item_name=self._item_name.text().strip() or (product.name if product else ""),
+            unit=product.unit if product else "",
+            quantity=self._parse_amount(self._item_qty),
+            unit_price=self._parse_amount(self._item_price),
+            vat_rate=product.vat_rate if product else Decimal("10"),
+            account_code=product.account_code if product else "",
+        )
+        invoice = Invoice(
+            ref=invoice_no,
+            invoice_no=invoice_no,
+            invoice_date=self._qdate_to_date(),
+            kind=kind,
+            status=InvoiceStatus.DRAFT,
+            description=self._description.text().strip(),
+            lines=[line],
+        )
+        return invoice, kind

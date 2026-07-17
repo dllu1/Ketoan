@@ -102,3 +102,7 @@ class ItemRepository:
                 ),
             )
         return item
+
+    def delete(self, item_id: int) -> None:
+        with self._conn:
+            self._conn.execute("DELETE FROM item WHERE id = ?", (item_id,))

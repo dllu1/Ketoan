@@ -1,4 +1,8 @@
-"""232px Sidebar matching components/nav.jsx — head · search · modules · footer."""
+"""232px Sidebar matching components/nav.jsx — head · modules · footer.
+
+Global search lives once, in the TopBar (Ctrl+K). The sidebar deliberately has
+no search box to avoid a duplicate, non-functional one.
+"""
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt, Signal
@@ -12,7 +16,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ui.primitives.icon_input import IconInput
 from ui.icons import icon as make_icon
 
 
@@ -61,35 +64,43 @@ class _SidebarItem(QPushButton):
         row.addWidget(icon_label)
         row.addLayout(labels, 1)
 
-        if badge is not None:
-            badge_label = QLabel(str(badge))
-            badge_label.setObjectName("SidebarItemBadge")
-            badge_label.setAlignment(Qt.AlignCenter)
-            row.addWidget(badge_label)
+        self._badge_label = QLabel("")
+        self._badge_label.setObjectName("SidebarItemBadge")
+        self._badge_label.setAlignment(Qt.AlignCenter)
+        row.addWidget(self._badge_label)
+        self.set_badge(badge)
 
         shortcut_label = QLabel(shortcut)
         shortcut_label.setObjectName("SidebarItemHot")
         row.addWidget(shortcut_label)
+
+    def set_badge(self, count: int | None) -> None:
+        """Show a count badge, or hide it entirely when there's nothing to flag."""
+        if count:
+            self._badge_label.setText(str(count))
+            self._badge_label.show()
+        else:
+            self._badge_label.hide()
 
 
 class Sidebar(QFrame):
     WIDTH = 232
 
     module_selected = Signal(str)
-    search_submitted = Signal(str)
     settings_requested = Signal()
 
     # key, vi, en, icon, shortcut, badge
     MODULES: tuple[tuple[str, str, str, str, str, int | None], ...] = (
         ("dashboard", "Tổng quan",        "Dashboard",         "grid",    "F2",  None),
         ("journal",   "Sổ nhật ký chung", "General Journal",   "book",    "F3",  None),
-        ("sales",     "Bán hàng",         "Sales",             "invoice", "F4",  7),
+        ("sales",     "Bán hàng",         "Sales",             "invoice", "F4",  None),
         ("purchase",  "Mua hàng",         "Purchases",         "cart",    "F5",  None),
         ("inventory", "Kho hàng",         "Inventory",         "box",     "F6",  None),
         ("cash",      "Quỹ & Ngân hàng",  "Cash & Bank",       "wallet",  "F7",  None),
         ("assets",    "Tài sản cố định",  "Fixed Assets",      "cube",    "F8",  None),
         ("reports",   "Báo cáo tài chính","Financial Reports", "chart",   "F9",  None),
         ("tax",       "Báo cáo thuế",     "Tax Reports",       "tax",     "F10", None),
+        ("help",      "Hướng dẫn sử dụng","User Guide",        "help",    "F1",  None),
     )
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -104,7 +115,6 @@ class Sidebar(QFrame):
         root.setSpacing(0)
 
         root.addWidget(self._build_head())
-        root.addWidget(self._build_search())
         root.addWidget(self._build_section_label())
         root.addLayout(self._build_nav())
         root.addStretch(1)
@@ -138,21 +148,6 @@ class Sidebar(QFrame):
         layout.addLayout(col, 1)
         return wrap
 
-    def _build_search(self) -> QWidget:
-        wrap = QWidget()
-        layout = QVBoxLayout(wrap)
-        layout.setContentsMargins(14, 10, 14, 6)
-        self._search = IconInput(
-            placeholder="Tìm theo TK, KH, phiếu…",
-            icon_name="search",
-            kbd_hint="Ctrl K",
-        )
-        self._search.returned.connect(
-            lambda: self.search_submitted.emit(self._search.text())
-        )
-        layout.addWidget(self._search)
-        return wrap
-
     def _build_section_label(self) -> QWidget:
         wrap = QWidget()
         layout = QHBoxLayout(wrap)
@@ -183,7 +178,7 @@ class Sidebar(QFrame):
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(10)
 
-        avatar = QLabel("NMA")
+        avatar = QLabel("LMN")
         avatar.setObjectName("SidebarFootAvatar")
         avatar.setFixedSize(QSize(28, 28))
         avatar.setAlignment(Qt.AlignCenter)
@@ -191,9 +186,9 @@ class Sidebar(QFrame):
         col = QVBoxLayout()
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(0)
-        name = QLabel("Nguyễn Mai Anh")
+        name = QLabel("Lý Mỹ Nghĩa")
         name.setObjectName("SidebarFootName")
-        role = QLabel("Kế toán trưởng")
+        role = QLabel("Kế toán")
         role.setObjectName("SidebarFootRole")
         col.addWidget(name)
         col.addWidget(role)
@@ -218,5 +213,7 @@ class Sidebar(QFrame):
         if btn:
             btn.setChecked(True)
 
-    def search_input(self) -> IconInput:
-        return self._search
+    def set_badge(self, module_key: str, count: int | None) -> None:
+        btn = self._buttons.get(module_key)
+        if btn:
+            btn.set_badge(count)
