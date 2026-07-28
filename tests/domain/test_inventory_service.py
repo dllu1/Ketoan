@@ -37,6 +37,71 @@ def _seed_item(conn, code="HH001", category="156"):
     )
 
 
+def test_remove_items_drops_selected_from_nxt(in_memory_db):
+    """Xóa một/nhiều mặt hàng: bỏ hết bút toán kho của chúng, giữ mã còn lại."""
+    _seed_item(in_memory_db, code="A", category="156")
+    _seed_item(in_memory_db, code="B", category="156")
+    _seed_item(in_memory_db, code="C", category="156")
+    svc = _service(in_memory_db)
+    svc.record_in("A", Decimal("5"), Decimal("1000"), account_code="156")
+    svc.record_in("A", Decimal("3"), Decimal("1200"), account_code="156")  # 2 dòng
+    svc.record_in("B", Decimal("2"), Decimal("2000"), account_code="156")
+    svc.record_in("C", Decimal("1"), Decimal("3000"), account_code="156")
+
+    removed = svc.remove_items(["A", "B"])
+    assert removed == 3                                    # 2 của A + 1 của B
+
+    codes = {r.item_code for r in svc.compute_nxt()}
+    assert codes == {"C"}
+
+
+def test_remove_items_empty_is_noop(in_memory_db):
+    _seed_item(in_memory_db, code="A", category="156")
+    svc = _service(in_memory_db)
+    svc.record_in("A", Decimal("5"), Decimal("1000"), account_code="156")
+    assert svc.remove_items([]) == 0
+    assert {r.item_code for r in svc.compute_nxt()} == {"A"}
+
+
+def test_movement_unit_overrides_catalog_default_in_nxt(in_memory_db):
+    """ĐVT trên chứng từ (kg) thắng ĐVT của danh mục ("m") ở NXT."""
+    _seed_item(in_memory_db, code="S20", category="152")   # danh mục có unit="m"
+    svc = _service(in_memory_db)
+    svc.record_in("S20", Decimal("100"), Decimal("15000"),
+                  account_code="152", item_name="Thép phi 20", unit="kg")
+
+    row = next(r for r in svc.compute_nxt() if r.item_code == "S20")
+    assert row.unit == "kg"
+
+
+def test_movement_without_unit_falls_back_to_catalog(in_memory_db):
+    _seed_item(in_memory_db, code="HH001", category="156")   # unit mặc định "m"
+    svc = _service(in_memory_db)
+    svc.record_in("HH001", Decimal("5"), Decimal("1000"), account_code="156")
+
+    row = next(r for r in svc.compute_nxt() if r.item_code == "HH001")
+    assert row.unit == "m"   # chứng từ không ghi ĐVT → lấy danh mục
+
+
+def test_list_stock_materials_from_ledger_filters_by_account(in_memory_db):
+    """Lấy NVL từ kho đọc sổ NXT (chứng từ), lọc nhóm 152, kể cả mã chưa khai
+    trong danh mục."""
+    svc = _service(in_memory_db)
+    svc.record_in("S20", Decimal("100"), Decimal("15364"),
+                  source_ref="NK01", account_code="152",
+                  item_name="Thép phi tròn 20")
+    svc.record_in("BK", Decimal("240"), Decimal("14900"),
+                  source_ref="NK01", account_code="152", item_name="Băng keo")
+    svc.record_in("TP1", Decimal("5"), Decimal("100"),
+                  source_ref="NK01", account_code="155", item_name="Thành phẩm")
+
+    mats = svc.list_stock_materials("152")
+    assert mats == [
+        ("BK", "Băng keo", ""),
+        ("S20", "Thép phi tròn 20", ""),
+    ]   # 155 bị loại; ĐVT rỗng vì chưa có trong danh mục
+
+
 def test_weighted_average_cost(in_memory_db):
     _seed_item(in_memory_db)
     svc = _service(in_memory_db)

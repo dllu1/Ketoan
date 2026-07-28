@@ -16,7 +16,6 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QDateEdit,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -32,11 +31,16 @@ from data.repositories.inventory_repo import InventoryRepository
 from data.repositories.item_repo import ItemRepository
 from domain.money import format_money
 from domain.services.inventory_service import InventoryError, InventoryService
+from domain.services.item_service import ItemService
+from ui.modals.item_detail_modal import ItemDetailModal
+from ui.modals.item_import_modal import ItemImportModal
 from ui.modals.stock_modal import StockModal
 from ui.primitives.button import Button, ButtonVariant
+from ui.primitives.date_edit import DateEdit
 from ui.primitives.icon_input import IconInput
 from ui.primitives.segmented import Segmented
 from ui.screens.costing_view import CostingView
+from ui.screens.material_cost_view import MaterialCostView
 from ui.screens.material_sheet_view import MaterialSheetView
 from ui.screens.product_sheet_view import ProductSheetView
 from ui.tokens import active_tokens
@@ -85,6 +89,7 @@ class InventoryScreen(QWidget):
             [
                 ("nxt", "Nhập–Xuất–Tồn"),
                 ("material", "Bảng kê NVL chính"),
+                ("nvl_direct", "NVL trực tiếp (15401)"),
                 ("costing", "Giá thành SP"),
                 ("product", "Bảng kê TP (155)"),
             ],
@@ -99,11 +104,13 @@ class InventoryScreen(QWidget):
         self._nxt = _NxtView()
         self._nxt.navigate_requested.connect(self.navigate_requested)
         self._material = MaterialSheetView()
+        self._nvl_direct = MaterialCostView()
         self._costing = CostingView()
         self._product = ProductSheetView()
         self._pages: dict[str, QWidget] = {
             "nxt": self._nxt,
             "material": self._material,
+            "nvl_direct": self._nvl_direct,
             "costing": self._costing,
             "product": self._product,
         }
@@ -140,6 +147,7 @@ class _NxtView(QWidget):
         self.setObjectName("NxtView")
 
         self._service = InventoryService(InventoryRepository(), ItemRepository())
+        self._items = ItemService(ItemRepository())
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -154,18 +162,25 @@ class _NxtView(QWidget):
             self._account.addItem(label, code)
         self._account.currentIndexChanged.connect(lambda _: self._reload())
 
-        self._date_from = QDateEdit()
-        self._date_from.setCalendarPopup(True)
-        self._date_from.setDisplayFormat("dd/MM/yyyy")
-        self._date_from.setDate(QDate(QDate.currentDate().year(), 1, 1))
+        # DateEdit: bôi đen + Delete để xóa trắng rồi gõ tay cả ngày/tháng/năm.
+        self._date_from = DateEdit(value=QDate(QDate.currentDate().year(), 1, 1))
         self._date_from.dateChanged.connect(lambda _: self._reload())
 
-        self._date_to = QDateEdit()
-        self._date_to.setCalendarPopup(True)
-        self._date_to.setDisplayFormat("dd/MM/yyyy")
-        self._date_to.setDate(QDate.currentDate())
+        self._date_to = DateEdit()
         self._date_to.dateChanged.connect(lambda _: self._reload())
 
+        btn_to_catalog = Button("Nhập vào danh mục", icon_name="download")
+        btn_to_catalog.setToolTip(
+            "Chọn mặt hàng đang có trong kho để đưa vào Danh mục vật tư "
+            "(có tích chọn từng mã, không nhập cả kho)."
+        )
+        btn_to_catalog.clicked.connect(self._on_import_to_catalog)
+        btn_delete = Button("Xóa khỏi kho", variant=ButtonVariant.DANGER, icon_name="trash")
+        btn_delete.setToolTip(
+            "Xóa hẳn (các) mặt hàng đang chọn khỏi kho — bỏ toàn bộ bút toán "
+            "nhập–xuất của chúng. Giữ Ctrl/Shift để chọn nhiều dòng."
+        )
+        btn_delete.clicked.connect(self._on_delete_items)
         btn_in = Button("Nhập kho", variant=ButtonVariant.PRIMARY, icon_name="arrow-down")
         btn_in.clicked.connect(self._on_stock_in)
 
@@ -176,19 +191,28 @@ class _NxtView(QWidget):
         toolbar.addWidget(self._date_from)
         toolbar.addWidget(QLabel("đến"))
         toolbar.addWidget(self._date_to)
+        toolbar.addWidget(btn_to_catalog)
+        toolbar.addWidget(btn_delete)
         toolbar.addWidget(btn_in)
         root.addLayout(toolbar)
 
         self._table = QTableWidget(0, len(_HEADERS))
         self._table.setHorizontalHeaderLabels(_HEADERS)
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SingleSelection)
+        # ExtendedSelection: giữ Ctrl/Shift để chọn nhiều mặt hàng cần xóa.
+        self._table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self._table.setAlternatingRowColors(True)
         self._table.verticalHeader().setVisible(False)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        # Double-click một mặt hàng = mở chi tiết (sổ phát sinh của riêng nó).
+        self._table.cellDoubleClicked.connect(self._on_row_double_clicked)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         root.addWidget(self._table, 1)
+
+        # Dòng bảng → dòng NXT tương ứng (dòng tiêu đề nhóm / cộng nhóm không có).
+        self._rows_by_table_row: dict[int, object] = {}
 
         self._summary = QLabel()
         self._summary.setObjectName("BalanceBar")
@@ -211,6 +235,7 @@ class _NxtView(QWidget):
         rows = self._service.compute_nxt(date_from, date_to)
         self._table.setRowCount(0)
         self._table.clearSpans()
+        self._rows_by_table_row.clear()
 
         kept = [
             r for r in rows
@@ -262,6 +287,7 @@ class _NxtView(QWidget):
     def _add_item_row(self, r) -> None:
         row = self._table.rowCount()
         self._table.insertRow(row)
+        self._rows_by_table_row[row] = r
         cells = [
             r.item_code,
             r.item_name,
@@ -305,6 +331,19 @@ class _NxtView(QWidget):
                 item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self._table.setItem(row, col, item)
 
+    def _on_row_double_clicked(self, row: int, _column: int) -> None:
+        """Mở chi tiết mặt hàng; bỏ qua dòng tiêu đề nhóm và dòng cộng nhóm."""
+        nxt_row = self._rows_by_table_row.get(row)
+        if nxt_row is None:
+            return
+        period = (
+            f"{self._date_from.date().toString('dd/MM/yyyy')}"
+            f"–{self._date_to.date().toString('dd/MM/yyyy')}"
+        )
+        ItemDetailModal(
+            self, item_code=nxt_row.item_code, nxt_row=nxt_row, period_label=period
+        ).exec()
+
     def _on_stock_in(self) -> None:
         dialog = StockModal(self)
         if not dialog.has_items:
@@ -324,6 +363,74 @@ class _NxtView(QWidget):
             QMessageBox.warning(self, "Không thể lưu", str(exc))
             return
         self._reload()
+
+    def _selected_item_codes(self) -> list[tuple[str, str]]:
+        """(mã, tên) của các mặt hàng đang chọn (bỏ dòng tiêu đề nhóm / cộng nhóm)."""
+        seen: dict[str, str] = {}
+        for index in self._table.selectionModel().selectedRows():
+            nxt_row = self._rows_by_table_row.get(index.row())
+            if nxt_row is not None:
+                seen.setdefault(nxt_row.item_code, nxt_row.item_name)
+        return list(seen.items())
+
+    def _on_delete_items(self) -> None:
+        selected = self._selected_item_codes()
+        if not selected:
+            QMessageBox.information(
+                self, "Chưa chọn mặt hàng",
+                "Hãy chọn ít nhất một mặt hàng trong bảng để xóa. "
+                "Giữ Ctrl hoặc Shift để chọn nhiều dòng cùng lúc.",
+            )
+            return
+        preview = "\n".join(f"•  {code} — {name}" for code, name in selected[:15])
+        if len(selected) > 15:
+            preview += f"\n… và {len(selected) - 15} mặt hàng khác"
+        confirm = QMessageBox.question(
+            self, "Xóa khỏi kho",
+            f"Xóa hẳn {len(selected)} mặt hàng sau khỏi kho?\n\n{preview}\n\n"
+            "Toàn bộ bút toán nhập–xuất của các mặt hàng này sẽ bị xóa và không "
+            "thể hoàn tác.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        removed = self._service.remove_items([code for code, _name in selected])
+        self._reload()
+        QMessageBox.information(
+            self, "Đã xóa",
+            f"Đã xóa {len(selected)} mặt hàng khỏi kho ({removed} bút toán nhập–xuất).",
+        )
+
+    def _on_import_to_catalog(self) -> None:
+        """Chọn mặt hàng trong kho để đưa vào Danh mục (có kiểm soát từng mã)."""
+        rows = self._service.compute_nxt(
+            self._qdate(self._date_from), self._qdate(self._date_to)
+        )
+        if not rows:
+            QMessageBox.information(
+                self, "Kho trống",
+                "Chưa có mặt hàng nào trong kho (theo kỳ đang lọc) để đưa vào danh mục.",
+            )
+            return
+        existing = {i.code for i in self._items.list_all()}
+        candidates = [
+            (r.item_code, r.item_name, r.unit, r.account_code, r.item_code in existing)
+            for r in rows
+        ]
+        if all(exists for *_x, exists in candidates):
+            QMessageBox.information(
+                self, "Không có mặt hàng mới",
+                "Mọi mặt hàng trong kho đều đã có trong danh mục.",
+            )
+            return
+        dialog = ItemImportModal(self, candidates=candidates)
+        if not dialog.exec():
+            return
+        created = self._items.import_stock_items(dialog.selected())
+        QMessageBox.information(
+            self, "Đã nhập vào danh mục",
+            f"Đã thêm {created} mặt hàng vào Danh mục vật tư.",
+        )
 
     def _prompt_add_items(self) -> None:
         """No catalog items yet: explain how to add one and offer a shortcut."""
@@ -346,6 +453,5 @@ class _NxtView(QWidget):
         return f"{value:,.2f}".rstrip("0").rstrip(".") if value else "0"
 
     @staticmethod
-    def _qdate(widget: QDateEdit) -> date:
-        qd = widget.date()
-        return date(qd.year(), qd.month(), qd.day())
+    def _qdate(widget: DateEdit) -> date:
+        return widget.date_value()

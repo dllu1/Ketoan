@@ -16,6 +16,7 @@ def _row_to_account(row: sqlite3.Row) -> Account:
         kind=row["kind"],
         circular=row["circular"],
         active=bool(row["active"]),
+        parent_code=row["parent_code"],
         created_at=_parse_dt(row["created_at"]),
         updated_at=_parse_dt(row["updated_at"]),
     )
@@ -59,12 +60,13 @@ class AccountRepository:
             cursor = self._conn.execute(
                 """
                 INSERT INTO account (
-                    code, name, kind, circular, active, created_at, updated_at
-                ) VALUES (?,?,?,?,?,?,?)
+                    code, name, kind, circular, active, parent_code,
+                    created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?)
                 """,
                 (
                     account.code, account.name, account.kind, account.circular,
-                    int(account.active),
+                    int(account.active), account.parent_code,
                     account.created_at.isoformat(),
                     account.updated_at.isoformat(),
                 ),
@@ -78,12 +80,12 @@ class AccountRepository:
                 """
                 UPDATE account SET
                     code = ?, name = ?, kind = ?, circular = ?, active = ?,
-                    updated_at = ?
+                    parent_code = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
                     account.code, account.name, account.kind, account.circular,
-                    int(account.active),
+                    int(account.active), account.parent_code,
                     account.updated_at.isoformat(),
                     account.id,
                 ),

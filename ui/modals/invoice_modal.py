@@ -3,6 +3,11 @@
 Định khoản Nợ/Có nằm *ngay trong bảng dòng hàng* (mỗi cột một tài khoản): một
 hóa đơn có thể gồm nhiều mặt hàng, mỗi mặt hàng vào một phân vùng kho (TK kho)
 và một cặp định khoản TK Nợ / TK Có khác nhau.
+
+Hóa đơn **mua hàng** có thêm bảng thứ hai — *chi phí dịch vụ mua ngoài* (giao
+hàng, tiền điện, tiền nước…). Những dòng này không có số lượng / đơn giá, chỉ có
+thành tiền, không chạy nhập kho, và mang thêm ô "Phân bổ vào" = tài khoản sẽ
+nhận chi phí khi kết chuyển giá thành sau này.
 """
 from __future__ import annotations
 
@@ -14,7 +19,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QCompleter,
-    QDateEdit,
     QDialog,
     QFormLayout,
     QFrame,
@@ -22,7 +26,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -36,6 +39,7 @@ from domain.models.invoice import (
     Invoice,
     InvoiceKind,
     InvoiceLine,
+    InvoiceLineType,
     InvoiceStatus,
     PaymentMethod,
 )
@@ -43,9 +47,35 @@ from domain.models.item import Item
 from domain.models.partner import PartnerType
 from domain.money import format_money, parse_money
 from ui.primitives.button import Button, ButtonVariant
+from ui.primitives.collapsible import CollapsibleSection
+from ui.primitives.date_edit import DateEdit
+from ui.primitives.enter_nav import (
+    EnterNavDelegate,
+    install_form_enter_nav,
+    install_grid_enter_nav,
+)
 
 (_COL_CODE, _COL_NAME, _COL_UNIT, _COL_WAREHOUSE, _COL_DEBIT, _COL_CREDIT,
  _COL_QTY, _COL_PRICE, _COL_VAT, _COL_AMOUNT) = range(10)
+
+# Bảng chi phí dịch vụ mua ngoài (chỉ hóa đơn mua hàng).
+(_CC_NAME, _CC_DEBIT, _CC_CREDIT, _CC_TARGET, _CC_VAT, _CC_AMOUNT) = range(6)
+
+# Dòng chi phí mới: Nợ 154 (chi phí SXKD dở dang), phân bổ về 155 (giá thành
+# thành phẩm) — hai ô này người dùng đổi thoải mái ngay trên lưới.
+_DEFAULT_COST_ACCOUNT = "154"
+_DEFAULT_COST_TARGET = "155"
+
+# Gợi ý cho ô "Phân bổ vào": nơi chi phí mua ngoài thường được kết chuyển tới.
+_ALLOCATION_HINTS = {
+    "155": "155 — Giá thành thành phẩm",
+    "154": "154 — Chi phí SXKD dở dang",
+    "156": "156 — Hàng hóa",
+    "632": "632 — Giá vốn hàng bán",
+    "641": "641 — Chi phí bán hàng",
+    "642": "642 — Chi phí quản lý doanh nghiệp",
+    "242": "242 — Chi phí trả trước (phân bổ dần)",
+}
 
 _PAYMENT_LABELS = {
     PaymentMethod.CREDIT: "Công nợ",
@@ -85,7 +115,7 @@ _KIND_COPY = {
 }
 
 
-class _CompleterDelegate(QStyledItemDelegate):
+class _CompleterDelegate(EnterNavDelegate):
     def __init__(self, completer: QCompleter, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._completer = completer
@@ -96,7 +126,7 @@ class _CompleterDelegate(QStyledItemDelegate):
         return editor
 
 
-class _AccountCompleterDelegate(QStyledItemDelegate):
+class _AccountCompleterDelegate(EnterNavDelegate):
     """Ô nhập tài khoản: QLineEdit + gợi ý ``"mã — tên"``; ô chỉ lưu mã trần.
 
     Dùng cho TK kho / TK Nợ / TK Có. Popup gợi ý hiện kèm *tên* tài khoản và lọc
@@ -189,10 +219,8 @@ class InvoiceModal(QDialog):
         self._invoice_no.setPlaceholderText("Số hóa đơn GTGT")
         self._serial = QLineEdit()
         self._serial.setPlaceholderText("Ký hiệu / mẫu số")
-        self._date = QDateEdit()
-        self._date.setCalendarPopup(True)
-        self._date.setDisplayFormat("dd/MM/yyyy")
-        self._date.setDate(QDate.currentDate())
+        # DateEdit: bôi đen + Delete để xóa trắng rồi gõ tay cả ngày/tháng/năm.
+        self._date = DateEdit()
         self._payment = QComboBox()
         for pm in PaymentMethod:
             self._payment.addItem(_PAYMENT_LABELS[pm], pm)
@@ -236,8 +264,10 @@ class InvoiceModal(QDialog):
         meta.addLayout(doc_form, 1)
         meta.addLayout(cust_form, 1)
 
-        grid_label = QLabel("DÒNG HÀNG · ĐỊNH KHOẢN")
-        grid_label.setObjectName("SectionLabel")
+        items_title = (
+            "NGUYÊN VẬT LIỆU · HÀNG HÓA" if self._kind is InvoiceKind.PURCHASE
+            else "DÒNG HÀNG · ĐỊNH KHOẢN"
+        )
 
         # ----- lines grid (mỗi dòng: mặt hàng + TK kho + định khoản Nợ/Có) -
         self._table = QTableWidget(0, 10)
@@ -273,6 +303,8 @@ class InvoiceModal(QDialog):
         self._table.setColumnWidth(_COL_VAT, 60)
         self._table.setColumnWidth(_COL_AMOUNT, 126)
         self._table.itemChanged.connect(self._on_cell_changed)
+        # Enter = sang ô sửa được kế tiếp; hết bảng thì tự mở dòng mới.
+        install_grid_enter_nav(self._table, add_row=self._add_row)
 
         line_buttons = QHBoxLayout()
         btn_add = Button("+ Thêm dòng", icon_name="plus")
@@ -282,6 +314,14 @@ class InvoiceModal(QDialog):
         line_buttons.addWidget(btn_add)
         line_buttons.addWidget(btn_del)
         line_buttons.addStretch(1)
+
+        # Bảng hàng hóa gói trong khối thu gọn được (dạng drop down; mặc định mở).
+        self._items_section = CollapsibleSection(items_title, expanded=True)
+        self._items_section.add_widget(self._table, 1)
+        self._items_section.add_layout(line_buttons)
+
+        # ----- chi phí dịch vụ mua ngoài (chỉ hóa đơn mua hàng) -----------
+        self._cost_section = self._build_cost_section(account_entries)
 
         self._totals_label = QLabel()
         self._totals_label.setObjectName("BalanceBar")
@@ -327,11 +367,13 @@ class InvoiceModal(QDialog):
         layout.addWidget(header)
         layout.addWidget(self._partner_alert)
         layout.addLayout(meta)
-        layout.addWidget(grid_label)
-        layout.addWidget(self._table, 1)
-        layout.addLayout(line_buttons)
+        layout.addWidget(self._items_section, 1)
+        layout.addWidget(self._cost_section)
         layout.addWidget(self._totals_label)
         layout.addLayout(footer)
+
+        # Enter ở ô nhập của chứng từ = sang ô sau (không bấm "Ghi sổ" nhầm).
+        install_form_enter_nav(self)
 
         # New documents default to "Công nợ" (matches the Invoice model default);
         # an existing one gets its real method back in _populate.
@@ -348,6 +390,125 @@ class InvoiceModal(QDialog):
         else:
             self._add_row()
         self._recompute_totals()
+
+    # ----- bảng chi phí dịch vụ mua ngoài -------------------------------
+
+    def _build_cost_section(
+        self, account_entries: list[tuple[str, str]]
+    ) -> QWidget:
+        """Bảng "chi phí dịch vụ khác" — chỉ dựng thật cho hóa đơn mua hàng.
+
+        Bán hàng vẫn được trả về một widget rỗng đã ẩn, để phần bố cục và các
+        vòng lặp phía dưới không phải rẽ nhánh theo loại chứng từ.
+        """
+        self._cost_table = QTableWidget(0, 6)
+        if self._kind is not InvoiceKind.PURCHASE:
+            section = QWidget()
+            section.hide()
+            return section
+
+        # Khối chi phí dịch vụ thu gọn được — mặc định đóng vì thường bỏ trống.
+        section = CollapsibleSection(
+            "CHI PHÍ DỊCH VỤ KHÁC · CHỜ PHÂN BỔ", expanded=False
+        )
+        hint = QLabel(
+            "Giao hàng, tiền điện, tiền nước… — không có số lượng / đơn giá. "
+            "“Phân bổ vào” là tài khoản sẽ nhận chi phí khi kết chuyển giá thành."
+        )
+        hint.setObjectName("DialogSubtitle")
+        hint.setWordWrap(True)
+
+        self._cost_table.setHorizontalHeaderLabels(
+            ["Nội dung chi phí", "TK Nợ", "TK Có", "Phân bổ vào", "VAT %", "Thành tiền"]
+        )
+        # "Phân bổ vào" gợi ý các TK kết chuyển quen thuộc trước, rồi tới toàn bộ
+        # hệ thống tài khoản — người dùng vẫn tự do chọn TK bất kỳ.
+        hinted = [(code, label_) for code, label_ in _ALLOCATION_HINTS.items()]
+        hinted_codes = set(_ALLOCATION_HINTS)
+        target_entries = hinted + [
+            (code, text) for code, text in account_entries if code not in hinted_codes
+        ]
+        for col, entries in (
+            (_CC_DEBIT, account_entries),
+            (_CC_CREDIT, account_entries),
+            (_CC_TARGET, target_entries),
+        ):
+            self._cost_table.setItemDelegateForColumn(
+                col, _AccountCompleterDelegate(entries, self)
+            )
+        self._cost_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._cost_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._cost_table.setAlternatingRowColors(True)
+        self._cost_table.setShowGrid(False)
+        self._cost_table.verticalHeader().setDefaultSectionSize(34)
+        self._cost_table.setMaximumHeight(160)
+        cost_head = self._cost_table.horizontalHeader()
+        cost_head.setSectionResizeMode(_CC_NAME, QHeaderView.Stretch)
+        for col in (_CC_DEBIT, _CC_CREDIT, _CC_TARGET, _CC_VAT, _CC_AMOUNT):
+            cost_head.setSectionResizeMode(col, QHeaderView.Fixed)
+        self._cost_table.setColumnWidth(_CC_DEBIT, 80)
+        self._cost_table.setColumnWidth(_CC_CREDIT, 80)
+        self._cost_table.setColumnWidth(_CC_TARGET, 100)
+        self._cost_table.setColumnWidth(_CC_VAT, 60)
+        self._cost_table.setColumnWidth(_CC_AMOUNT, 126)
+        self._cost_table.itemChanged.connect(lambda _: self._recompute_totals())
+        install_grid_enter_nav(self._cost_table, add_row=self._add_cost_row)
+
+        cost_buttons = QHBoxLayout()
+        btn_add_cost = Button("+ Thêm chi phí", icon_name="plus")
+        btn_add_cost.clicked.connect(lambda: self._add_cost_row())
+        btn_del_cost = Button("− Xóa chi phí", variant=ButtonVariant.DANGER, icon_name="trash")
+        btn_del_cost.clicked.connect(self._remove_current_cost_row)
+        cost_buttons.addWidget(btn_add_cost)
+        cost_buttons.addWidget(btn_del_cost)
+        cost_buttons.addStretch(1)
+
+        section.add_widget(hint)
+        section.add_widget(self._cost_table)
+        section.add_layout(cost_buttons)
+        return section
+
+    def _add_cost_row(self, line: InvoiceLine | None = None) -> None:
+        table = self._cost_table
+        table.blockSignals(True)
+        row = table.rowCount()
+        table.insertRow(row)
+        values = [
+            line.item_name if line else "",
+            (line.debit_account if line and line.debit_account else _DEFAULT_COST_ACCOUNT),
+            (line.credit_account if line and line.credit_account
+             else self._current_payment().payable_account),
+            (line.allocation_target if line and line.allocation_target
+             else _DEFAULT_COST_TARGET),
+            f"{line.vat_rate:g}" if line else "10",
+            format_money(line.amount) if line and line.amount else "",
+        ]
+        for col, value in enumerate(values):
+            item = QTableWidgetItem(value)
+            if col in (_CC_VAT, _CC_AMOUNT):
+                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            table.setItem(row, col, item)
+        table.blockSignals(False)
+        self._recompute_totals()
+
+    def _remove_current_cost_row(self) -> None:
+        row = self._cost_table.currentRow()
+        if row >= 0:
+            self._cost_table.removeRow(row)
+            self._recompute_totals()
+
+    def _cost_text(self, row: int, col: int) -> str:
+        item = self._cost_table.item(row, col)
+        return item.text().strip() if item else ""
+
+    def _cost_money(self, row: int, col: int) -> Decimal:
+        try:
+            return parse_money(self._cost_text(row, col))
+        except ValueError:
+            return Decimal("0")
+
+    def _has_cost_table(self) -> bool:
+        return self._kind is InvoiceKind.PURCHASE
 
     # ----- per-line account defaults ------------------------------------
 
@@ -382,6 +543,17 @@ class InvoiceModal(QDialog):
                 if not current or current in _SALE_DEBIT_PAYMENT:
                     self._set_cell(row, _COL_DEBIT, pm.debit_account)
         self._table.blockSignals(False)
+        if not self._has_cost_table():
+            return
+        # Dòng chi phí cũng trả cho NCC/tiền, nên TK Có đi theo hình thức thanh toán.
+        self._cost_table.blockSignals(True)
+        for row in range(self._cost_table.rowCount()):
+            current = self._cost_text(row, _CC_CREDIT)
+            if not current or current in _PURCHASE_CREDIT_PAYMENT:
+                item = self._cost_table.item(row, _CC_CREDIT)
+                if item is not None:
+                    item.setText(pm.payable_account)
+        self._cost_table.blockSignals(False)
 
     # ----- row helpers --------------------------------------------------
 
@@ -421,7 +593,24 @@ class InvoiceModal(QDialog):
     def _on_cell_changed(self, item: QTableWidgetItem) -> None:
         if item.column() == _COL_CODE:
             self._autofill_from_item(item.row())
+        elif item.column() == _COL_WAREHOUSE:
+            self._sync_debit_to_warehouse(item.row())
         self._refresh_amount(item.row())
+
+    def _sync_debit_to_warehouse(self, row: int) -> None:
+        """Mua hàng: gõ mã kho thì TK Nợ chạy theo (hàng ghi vào chính kho đó).
+
+        Chỉ áp dụng cho hóa đơn mua; bán hàng thì TK Nợ là tiền/phải thu nên mã
+        kho không liên quan.
+        """
+        if self._kind is not InvoiceKind.PURCHASE:
+            return
+        warehouse = self._cell_text(row, _COL_WAREHOUSE)
+        if not warehouse:
+            return
+        self._table.blockSignals(True)
+        self._set_cell(row, _COL_DEBIT, warehouse)
+        self._table.blockSignals(False)
 
     def _autofill_from_item(self, row: int) -> None:
         code = self._cell_text(row, _COL_CODE)
@@ -481,12 +670,33 @@ class InvoiceModal(QDialog):
             vat_rate = self._cell_money(row, _COL_VAT)
             subtotal += amount
             vat_total += (amount * vat_rate / Decimal("100")).quantize(Decimal("1"))
-        grand = subtotal + vat_total
+        cost_total = Decimal("0")
+        if self._has_cost_table():
+            for row in range(self._cost_table.rowCount()):
+                amount = self._cost_money(row, _CC_AMOUNT)
+                vat_rate = self._cost_money(row, _CC_VAT)
+                cost_total += amount
+                vat_total += (amount * vat_rate / Decimal("100")).quantize(Decimal("1"))
+        grand = subtotal + cost_total + vat_total
+        cost_part = (
+            f"Chi phí DV {format_money(cost_total)}    " if cost_total else ""
+        )
         self._totals_label.setText(
             f"Tiền hàng {format_money(subtotal)}    "
+            f"{cost_part}"
             f"Thuế GTGT {format_money(vat_total)}    "
             f"TỔNG {format_money(grand)}"
         )
+        self._update_section_summaries(cost_total)
+
+    def _update_section_summaries(self, cost_total: Decimal) -> None:
+        """Chữ tóm tắt cạnh tiêu đề mỗi khối thu gọn (đếm dòng / báo có chi phí)."""
+        self._items_section.set_summary(f"· {self._table.rowCount()} dòng")
+        if isinstance(self._cost_section, CollapsibleSection):
+            n = self._cost_table.rowCount()
+            self._cost_section.set_summary(
+                f"· {n} dòng · {format_money(cost_total)}" if n else ""
+            )
 
     # ----- data in/out --------------------------------------------------
 
@@ -548,11 +758,18 @@ class InvoiceModal(QDialog):
                 line.debit_account = invoice.debit_account
             if not line.credit_account:
                 line.credit_account = invoice.credit_account
-            self._add_row(line)
+            if line.is_cost and self._has_cost_table():
+                self._add_cost_row(line)
+            else:
+                self._add_row(line)
+        # Chứng từ có sẵn dòng chi phí → mở khối chi phí để thấy ngay, khỏi tưởng mất.
+        if isinstance(self._cost_section, CollapsibleSection) \
+                and self._cost_table.rowCount() > 0:
+            self._cost_section.set_expanded(True)
 
     def _qdate_to_date(self) -> date:
-        qd = self._date.date()
-        return date(qd.year(), qd.month(), qd.day())
+        # DateEdit tự diễn giải chuỗi nếu người dùng đang gõ tay dở.
+        return self._date.date_value()
 
     def _submit(self, status: InvoiceStatus) -> None:
         self._status = status
@@ -600,4 +817,36 @@ class InvoiceModal(QDialog):
                     credit_account=self._cell_text(row, _COL_CREDIT),
                 )
             )
+        invoice.lines.extend(self._cost_lines())
         return invoice
+
+    def _cost_lines(self) -> list[InvoiceLine]:
+        """Dòng chi phí dịch vụ → InvoiceLine loại COST.
+
+        Chi phí không có số lượng thật; lưu ``quantity = 1`` và ``unit_price =``
+        thành tiền để mọi công thức tiền/thuế dùng chung với dòng hàng.
+        """
+        if not self._has_cost_table():
+            return []
+        lines: list[InvoiceLine] = []
+        for row in range(self._cost_table.rowCount()):
+            name = self._cost_text(row, _CC_NAME)
+            amount = self._cost_money(row, _CC_AMOUNT)
+            if not name and amount == 0:
+                continue
+            lines.append(
+                InvoiceLine(
+                    item_code="",
+                    item_name=name,
+                    unit="",
+                    quantity=Decimal("1"),
+                    unit_price=amount,
+                    vat_rate=self._cost_money(row, _CC_VAT),
+                    account_code="",
+                    debit_account=self._cost_text(row, _CC_DEBIT),
+                    credit_account=self._cost_text(row, _CC_CREDIT),
+                    line_type=InvoiceLineType.COST,
+                    allocation_target=self._cost_text(row, _CC_TARGET),
+                )
+            )
+        return lines

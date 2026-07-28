@@ -23,6 +23,9 @@ class Account:
     kind: str = ""
     circular: str = ""
     active: bool = True
+    # Mã tài khoản cha (tổng hợp). Rỗng = tài khoản không thuộc tổng hợp nào.
+    # Số dư tài khoản cha = số dư riêng + tổng số dư các con (đệ quy).
+    parent_code: str = ""
     id: int | None = None
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)

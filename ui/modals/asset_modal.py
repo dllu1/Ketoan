@@ -7,7 +7,6 @@ from decimal import Decimal
 from PySide6.QtCore import QDate
 from PySide6.QtWidgets import (
     QComboBox,
-    QDateEdit,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -20,12 +19,16 @@ from PySide6.QtWidgets import (
 )
 
 from domain.models.fixed_asset import FixedAsset
+from ui.primitives.date_edit import DateEdit
+from ui.primitives.enter_nav import install_form_enter_nav
 
 _ASSET_ACCOUNTS = [("211", "211 — TSCĐ hữu hình"), ("213", "213 — TSCĐ vô hình")]
+# 15403 = CP sản xuất chung đi thẳng vào giá thành — dùng cho máy móc sản xuất.
 _EXPENSE_ACCOUNTS = [
     ("642", "642 — CP quản lý DN"),
     ("641", "641 — CP bán hàng"),
-    ("627", "627 — CP sản xuất chung"),
+    ("15403", "15403 — CP sản xuất chung (máy SX · vào giá thành)"),
+    ("627", "627 — CP sản xuất chung (TT200)"),
 ]
 
 
@@ -58,10 +61,8 @@ class AssetModal(QDialog):
         self._life.setValue(12)
         self._life.setSuffix(" tháng")
 
-        self._start = QDateEdit()
-        self._start.setCalendarPopup(True)
-        self._start.setDisplayFormat("dd/MM/yyyy")
-        self._start.setDate(QDate.currentDate())
+        # DateEdit: bôi đen + Delete để xóa trắng rồi gõ tay cả ngày/tháng/năm.
+        self._start = DateEdit()
 
         self._notes = QTextEdit()
         self._notes.setFixedHeight(60)
@@ -84,6 +85,9 @@ class AssetModal(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         layout.addWidget(buttons)
+
+        # Enter ở ô nhập = sang ô sau (không bấm "Save" nhầm).
+        install_form_enter_nav(self)
 
         if asset is not None:
             self._populate(asset)
@@ -121,7 +125,7 @@ class AssetModal(QDialog):
         asset.cost = Decimal(str(self._cost.value()))
         asset.salvage_value = Decimal(str(self._salvage.value()))
         asset.useful_life_months = self._life.value()
-        qd = self._start.date()
-        asset.start_date = date(qd.year(), qd.month(), qd.day())
+        # DateEdit tự diễn giải chuỗi nếu người dùng đang gõ tay dở.
+        asset.start_date = self._start.date_value()
         asset.notes = self._notes.toPlainText().strip()
         return asset

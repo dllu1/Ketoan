@@ -28,7 +28,9 @@ class PeriodModal(QDialog):
         this_year = date.today().year
 
         self._year = QComboBox()
-        for y in range(this_year - 6, this_year + 2):
+        # Đủ rộng để xem lại chứng từ cũ nhập từ email/hóa đơn lưu trữ — 6 năm
+        # không đủ, hộp thư còn hóa đơn từ nhiều năm trước.
+        for y in range(this_year - 12, this_year + 2):
             self._year.addItem(str(y), y)
         yi = self._year.findData(current.year)
         self._year.setCurrentIndex(yi if yi >= 0 else self._year.count() - 2)

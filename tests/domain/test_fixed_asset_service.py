@@ -31,11 +31,12 @@ def _service(conn):
     return FixedAssetService(FixedAssetRepository(conn), journal, AccountRepository(conn)), journal
 
 
-def _asset(code="TS001", life=12, cost="120000000", start=date(2026, 1, 1)):
+def _asset(code="TS001", life=12, cost="120000000", start=date(2026, 1, 1),
+           expense="642"):
     from domain.models.fixed_asset import FixedAsset
 
     return FixedAsset(
-        code=code, name="Máy CNC", asset_account="211", expense_account="642",
+        code=code, name="Máy CNC", asset_account="211", expense_account=expense,
         cost=Decimal(cost), useful_life_months=life, start_date=start,
     )
 
@@ -88,6 +89,24 @@ def test_no_depreciation_returns_none(in_memory_db):
     svc, _ = _service(in_memory_db)
     svc.create(_asset(start=date(2026, 1, 1), life=3))  # hết KH sau tháng 3
     assert svc.post_monthly_depreciation(2026, 8) is None
+
+
+def test_production_depreciation_only_counts_production_machines(in_memory_db):
+    svc, _ = _service(in_memory_db)
+    svc.create(_asset(code="TS001", expense="15403"))   # máy sản xuất
+    svc.create(_asset(code="TS002", expense="642"))     # xe văn phòng
+    # Tháng: chỉ máy sản xuất; cả năm: 12 kỳ của riêng máy sản xuất.
+    assert svc.production_depreciation(2026, 6) == Decimal("10000000")
+    assert svc.production_depreciation(2026) == Decimal("120000000")
+
+
+def test_production_depreciation_posts_to_15403(in_memory_db):
+    svc, _ = _service(in_memory_db)
+    svc.create(_asset(expense="15403"))
+    entry = svc.post_monthly_depreciation(2026, 6)
+    assert entry is not None and entry.is_balanced
+    line = next(l for l in entry.lines if l.account_code == "15403")
+    assert line.debit == Decimal("10000000")
 
 
 def test_invalid_asset_rejected(in_memory_db):

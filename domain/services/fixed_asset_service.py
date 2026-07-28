@@ -14,6 +14,7 @@ from domain.services.journal_service import JournalService
 _ACCUMULATED_DEPR_ACCOUNT = "214"
 _DEPR_NAMES = {
     "214": "Hao mòn tài sản cố định",
+    "15403": "Chi phí sản xuất chung (giá thành)",
     "627": "Chi phí sản xuất chung",
     "641": "Chi phí bán hàng",
     "642": "Chi phí quản lý doanh nghiệp",
@@ -84,6 +85,20 @@ class FixedAssetService:
                 )
             )
         return schedule
+
+    def production_depreciation(self, year: int, month: int | None = None) -> Decimal:
+        """Khấu hao máy móc dùng cho sản xuất (TK 15403/627) của kỳ.
+
+        ``month=None`` = cả năm, khớp với bộ chọn kỳ của bảng tính giá thành.
+        Đây là phần khấu hao phải nằm trong pool chi phí sản xuất chung."""
+        months = range(1, 13) if month is None else (month,)
+        total = Decimal("0")
+        for asset in self._repo.list_all():
+            if not asset.feeds_production_cost:
+                continue
+            for m in months:
+                total += asset.depreciation_for(year, m)
+        return total
 
     def post_monthly_depreciation(self, year: int, month: int) -> JournalEntry | None:
         """Ghi bút toán khấu hao tháng: Nợ chi phí / Có 214 cho mọi TSCĐ đang KH.

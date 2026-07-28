@@ -40,14 +40,29 @@ class MaterialLine:
     # already have real document movements). Such rows are displayed but never
     # re-pushed to the ledger on save, so they can't double-count mua/bán.
     from_ledger: bool = False
+    # Phần xuất do bảng giá thành sinh ra (nguồn GT-NVL): NVL tiêu hao theo định
+    # mức. Hiển thị và trừ vào tồn như mọi khoản xuất khác, nhưng KHÔNG lưu vào
+    # material_sheet_line và không đẩy lại sổ kho khi lưu — nó đã nằm sẵn trong
+    # sổ kho rồi, ghi thêm lần nữa là trừ kho hai lần.
+    issued_qty: Decimal = field(default_factory=lambda: _ZERO)
+    issued_value: Decimal = field(default_factory=lambda: _ZERO)
+
+    @property
+    def total_out_qty(self) -> Decimal:
+        """Tổng xuất hiển thị = xuất nhập tay + xuất theo giá thành."""
+        return self.out_qty + self.issued_qty
+
+    @property
+    def total_out_value(self) -> Decimal:
+        return self.out_value + self.issued_value
 
     @property
     def closing_qty(self) -> Decimal:
-        return self.opening_qty + self.in_qty - self.out_qty
+        return self.opening_qty + self.in_qty - self.total_out_qty
 
     @property
     def closing_value(self) -> Decimal:
-        return self.opening_value + self.in_value - self.out_value
+        return self.opening_value + self.in_value - self.total_out_value
 
     @property
     def is_empty(self) -> bool:
@@ -89,7 +104,7 @@ class MaterialSheet:
 
     @property
     def total_out_value(self) -> Decimal:
-        return sum((line.out_value for line in self.lines), _ZERO)
+        return sum((line.total_out_value for line in self.lines), _ZERO)
 
     @property
     def total_closing_value(self) -> Decimal:

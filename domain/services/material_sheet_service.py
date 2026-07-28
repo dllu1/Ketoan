@@ -81,7 +81,72 @@ class MaterialSheetService:
             line for line in self._repo.list_for_period(period_key)
             if line.code.strip() not in ledger_codes
         ]
-        return MaterialSheet(period_key=period_key, lines=ledger_lines + manual)
+        lines = ledger_lines + manual
+        self._attach_costing_issues(period_key, lines)
+        return MaterialSheet(period_key=period_key, lines=lines)
+
+    def _attach_costing_issues(
+        self, period_key: str, lines: list[MaterialLine]
+    ) -> None:
+        """Gắn phần NVL đã xuất theo giá thành (GT-NVL) vào cột Xuất của bảng kê.
+
+        Phần này nằm trong sổ kho nhưng bị :meth:`_ledger_material_rows` loại ra,
+        nên trước đây lưu bảng giá thành xong mở bảng kê NVL chính vẫn thấy
+        Xuất = 0. Nó thuộc về sổ kho chứ không phải bảng kê, nên đưa vào
+        ``issued_*``: hiển thị và trừ tồn, nhưng không lưu lại và không đẩy lại
+        sổ kho (tránh trừ kho hai lần).
+
+        Vật tư chỉ bị tiêu hao mà chưa có dòng nào trong bảng thì thêm một dòng
+        chỉ-đọc, nếu không khoản xuất đó biến mất khỏi bảng.
+        """
+        issued = self._issued_by_costing(period_key)
+        if not issued:
+            return
+        by_code = {line.code.strip(): line for line in lines if line.code.strip()}
+        for code, (qty, value) in sorted(issued.items()):
+            line = by_code.get(code)
+            if line is None:
+                item = self._items.find_by_code(code)
+                line = MaterialLine(
+                    code=code,
+                    name=item.name if item else "",
+                    unit=item.unit if item else "",
+                    from_ledger=True,
+                )
+                lines.append(line)
+            line.issued_qty = qty
+            line.issued_value = value
+
+    def _issued_by_costing(
+        self, period_key: str
+    ) -> dict[str, tuple[Decimal, Decimal]]:
+        """{mã: (SL, TT)} NVL xuất theo giá thành trong kỳ (nguồn ``GT-NVL``).
+
+        Lấy bằng hiệu của hai lượt NXT chỉ khác nhau ở chỗ có loại ``GT-NVL`` hay
+        không, nên chỉ dùng API công khai của sổ kho.
+        """
+        start, end = _period_bounds(period_key)
+        without = {
+            r.item_code: r for r in self._inventory.compute_nxt(
+                start, end,
+                exclude_source_prefix=(_SHEET_SOURCE_PREFIX, _COSTING_SOURCE_PREFIX),
+            )
+        }
+        with_issues = {
+            r.item_code: r for r in self._inventory.compute_nxt(
+                start, end, exclude_source_prefix=_SHEET_SOURCE_PREFIX,
+            )
+        }
+        issued: dict[str, tuple[Decimal, Decimal]] = {}
+        for code, row in with_issues.items():
+            if row.account_code != _MATERIAL_ACCOUNT:
+                continue
+            base = without.get(code)
+            qty = row.out_qty - (base.out_qty if base else _ZERO)
+            value = row.out_value - (base.out_value if base else _ZERO)
+            if qty > _ZERO or value > _ZERO:
+                issued[code] = (qty, value)
+        return issued
 
     # ----- save: persist + push only the rows the worksheet owns -----------
 

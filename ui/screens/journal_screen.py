@@ -7,7 +7,6 @@ from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QDateEdit,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -34,6 +33,7 @@ from domain.services.purchase_service import PurchaseService
 from domain.services.sales_service import SalesService
 from ui.modals.entry_modal import EntryModal
 from ui.primitives.button import Button, ButtonVariant
+from ui.primitives.date_edit import DateEdit
 from ui.primitives.icon_input import IconInput
 
 _STATUS_LABELS = {EntryStatus.DRAFT: "Nháp", EntryStatus.POSTED: "Đã ghi sổ"}
@@ -252,11 +252,9 @@ class JournalScreen(QWidget):
     # ----- date range ---------------------------------------------------
 
     @staticmethod
-    def _make_date() -> QDateEdit:
-        edit = QDateEdit()
-        edit.setCalendarPopup(True)
-        edit.setDisplayFormat("dd/MM/yyyy")
-        return edit
+    def _make_date() -> DateEdit:
+        # DateEdit: bôi đen + Delete để xóa trắng rồi gõ tay cả ngày/tháng/năm.
+        return DateEdit()
 
     def _sync_dates_to_period(self) -> None:
         """Reset the From/To pickers to the active period's bounds.

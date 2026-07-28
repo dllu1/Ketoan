@@ -8,6 +8,7 @@ from data.account_sets import available_circulars, load_accounts
 from data.repositories.account_repo import AccountRepository
 from data.repositories.settings_repo import SettingsRepository
 from domain.models.account import Account
+from domain.services import account_hierarchy
 
 _ACTIVE_CIRCULAR_KEY = "active_circular"
 _DEFAULT_CIRCULAR = "TT133"
@@ -108,9 +109,42 @@ class AccountService:
                 conflicts.append((entry["code"], existing.name, entry["name"]))
         return added, conflicts
 
-    @staticmethod
-    def _validate(account: Account) -> None:
-        if not account.code.strip():
+    # ----- hierarchy (tài khoản tổng hợp) ----------------------------------
+
+    def parent_map(self) -> dict[str, str]:
+        """Map ``{code: parent_code}`` đã chuẩn hoá trên các TK đang hoạt động."""
+        accounts = self._repo.list_all()
+        raw = {a.code: a.parent_code for a in accounts if a.parent_code}
+        return account_hierarchy.normalize_parents(raw, {a.code for a in accounts})
+
+    def _validate(self, account: Account) -> None:
+        code = account.code.strip()
+        if not code:
             raise AccountValidationError("Mã tài khoản là bắt buộc.")
         if not account.name.strip():
             raise AccountValidationError("Tên tài khoản là bắt buộc.")
+        parent = account.parent_code.strip()
+        if parent:
+            if parent == code:
+                raise AccountValidationError(
+                    "Tài khoản không thể là tổng hợp của chính nó."
+                )
+            if self._repo.find_by_code(parent) is None:
+                raise AccountValidationError(
+                    f"Tài khoản tổng hợp '{parent}' không tồn tại."
+                )
+            # Chống vòng lặp: đi ngược chuỗi cha từ ``parent`` — nếu gặp lại
+            # chính ``code`` thì liên kết này tạo thành vòng.
+            existing = {
+                a.code: a.parent_code
+                for a in self._repo.list_all()
+                if a.parent_code
+            }
+            cur, guard = parent, 0
+            while cur and guard < 1000:
+                if cur == code:
+                    raise AccountValidationError(
+                        "Liên kết tổng hợp tạo thành vòng lặp giữa các tài khoản."
+                    )
+                cur = existing.get(cur, "")
+                guard += 1

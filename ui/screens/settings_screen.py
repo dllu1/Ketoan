@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -20,6 +21,10 @@ from app.theme import current_mode, set_mode
 from data.repositories.account_repo import AccountRepository
 from domain.models.company import CompanyProfile
 from domain.services.account_service import AccountService
+from decimal import Decimal
+
+from app.period import active_period
+from domain.money import format_money
 from domain.services.closing_service import ClosingService
 from domain.services.company_service import CompanyService
 from domain.services.email_config_service import (
@@ -165,6 +170,12 @@ class SettingsScreen(QWidget):
         card.add(note)
         body.addWidget(card)
 
+        # ----- chi phí trả trước (242) ------------------------------------
+        body.addWidget(self._build_prepaid_card())
+
+        # ----- kết chuyển xác định KQKD (911) -----------------------------
+        body.addWidget(self._build_result_card())
+
         # ----- chốt sổ cuối năm ------------------------------------------
         close_card = Card(
             title="Chốt sổ cuối năm",
@@ -189,6 +200,201 @@ class SettingsScreen(QWidget):
         body.addWidget(self._build_email_card())
 
         body.addStretch(1)
+
+    # ----- chi phí trả trước (TK 242) ------------------------------------
+
+    def _build_prepaid_card(self) -> Card:
+        card = Card(
+            title="Chi phí trả trước (TK 242)",
+            subtitle="Khoản chi dùng cho nhiều kỳ: khai số tiền + số tháng, "
+                     "hằng tháng phân bổ Nợ TK chi phí / Có 242.",
+        )
+        self._prepaid_note = QLabel()
+        self._prepaid_note.setObjectName("SettingsNote")
+        self._prepaid_note.setWordWrap(True)
+
+        open_btn = Button("Danh sách & lịch phân bổ", icon_name="edit")
+        open_btn.clicked.connect(self._on_open_prepaid)
+        post_btn = Button("Phân bổ kỳ này", variant=ButtonVariant.PRIMARY, icon_name="check")
+        post_btn.clicked.connect(self._on_post_prepaid)
+
+        row = QHBoxLayout()
+        row.addWidget(open_btn)
+        row.addWidget(post_btn)
+        row.addStretch(1)
+        card.add_layout(row)
+        card.add(self._prepaid_note)
+        self._refresh_prepaid_note()
+        return card
+
+    @staticmethod
+    def _prepaid_service():
+        from data.repositories.journal_repo import JournalRepository
+        from domain.services.journal_service import JournalService
+        from domain.services.prepaid_service import PrepaidService
+
+        return PrepaidService(journal=JournalService(JournalRepository()))
+
+    def _refresh_prepaid_note(self) -> None:
+        service = self._prepaid_service()
+        items = service.list_all()
+        period = active_period()
+        months = self._prepaid_months(period)
+        due = sum((service.monthly_total(period.year, m) for m in months), Decimal("0"))
+        self._prepaid_note.setText(
+            f"Đang theo dõi {len(items)} khoản. "
+            f"Phân bổ của {period.label}: {format_money(due)}. "
+            "Chạy lại một tháng sẽ thay thế bút toán cũ (PBCP-YYYYMM)."
+        )
+
+    @staticmethod
+    def _prepaid_months(period) -> list[int]:
+        """Cả năm → phân bổ đủ 12 tháng; chọn 1 tháng → chỉ tháng đó."""
+        return list(range(1, 13)) if period.month is None else [period.month]
+
+    def _on_open_prepaid(self) -> None:
+        from ui.modals.prepaid_modal import PrepaidModal
+
+        PrepaidModal(self, self._prepaid_service()).exec()
+        self._refresh_prepaid_note()
+
+    def _on_post_prepaid(self) -> None:
+        period = active_period()
+        service = self._prepaid_service()
+        posted = []
+        for month in self._prepaid_months(period):
+            entry = service.post_monthly(period.year, month)
+            if entry is not None:
+                posted.append(entry)
+        self._refresh_prepaid_note()
+        if not posted:
+            QMessageBox.information(
+                self, "Phân bổ chi phí trả trước",
+                f"{period.label} không có khoản nào tới hạn phân bổ.",
+            )
+            return
+        total = sum(
+            (sum(ln.credit for ln in e.lines) for e in posted), Decimal("0")
+        )
+        QMessageBox.information(
+            self, "Đã phân bổ",
+            f"Đã ghi {len(posted)} bút toán phân bổ ({format_money(total)}) "
+            f"cho {period.label}.\nXem ở Sổ nhật ký chung.",
+        )
+
+    # ----- kết chuyển xác định KQKD (911) --------------------------------
+
+    def _build_result_card(self) -> Card:
+        """Kết chuyển doanh thu / chi phí sang 911 rồi sang 4212 cho kỳ đang chọn."""
+        card = Card(
+            title="Kết chuyển xác định KQKD (TK 911)",
+            subtitle="Cuối kỳ: kết chuyển 511/515/711 và 632/641/642/811/821 sang "
+                     "TK 911, rồi đưa lãi/lỗ sang TK 4212.",
+        )
+        self._result_note = QLabel()
+        self._result_note.setObjectName("SettingsNote")
+        self._result_note.setWordWrap(True)
+
+        preview_btn = Button("Xem trước", icon_name="search")
+        preview_btn.clicked.connect(self._on_preview_result)
+        post_btn = Button("Kết chuyển", variant=ButtonVariant.PRIMARY, icon_name="check")
+        post_btn.clicked.connect(self._on_post_result)
+        undo_btn = Button("Hủy kết chuyển", variant=ButtonVariant.DANGER, icon_name="trash")
+        undo_btn.clicked.connect(self._on_unpost_result)
+
+        row = QHBoxLayout()
+        row.addWidget(preview_btn)
+        row.addWidget(post_btn)
+        row.addWidget(undo_btn)
+        row.addStretch(1)
+        card.add_layout(row)
+        card.add(self._result_note)
+        self._refresh_result_note()
+        return card
+
+    def _result_service(self):
+        from data.repositories.journal_repo import JournalRepository
+        from domain.services.journal_service import JournalService
+        from domain.services.result_service import ResultService
+
+        return ResultService(JournalService(JournalRepository()))
+
+    def _cogs_service(self):
+        from data.repositories.journal_repo import JournalRepository
+        from domain.services.cogs_service import CogsService
+        from domain.services.journal_service import JournalService
+
+        return CogsService(JournalService(JournalRepository()))
+
+    def _refresh_result_note(self) -> None:
+        period = active_period()
+        done = self._result_service().is_posted(period.date_from, period.date_to)
+        state = "đã kết chuyển" if done else "chưa kết chuyển"
+        self._result_note.setText(
+            f"Kỳ đang chọn: {period.label} "
+            f"({period.date_from:%d/%m/%Y} → {period.date_to:%d/%m/%Y}) — {state}. "
+            "Chạy lại sẽ thay thế bút toán cũ, không cộng dồn."
+        )
+
+    def _on_preview_result(self) -> None:
+        period = active_period()
+        plan = self._result_service().plan(period.date_from, period.date_to)
+        if plan.is_empty:
+            QMessageBox.information(
+                self, "Kết chuyển KQKD",
+                f"Kỳ {period.label} chưa có phát sinh doanh thu / chi phí nào.",
+            )
+            return
+        lines = [f"Doanh thu ({format_money(plan.total_revenue)}):"]
+        cogs = self._cogs_service().plan(period.date_from, period.date_to)
+        if not cogs.is_empty:
+            lines.insert(0, f"Giá vốn sẽ kết chuyển (632): {format_money(cogs.total)}\n")
+        lines += [f"   {ln.account_code}  {format_money(ln.amount)}" for ln in plan.revenue]
+        lines.append(f"Chi phí ({format_money(plan.total_expense)}):")
+        lines += [f"   {ln.account_code}  {format_money(ln.amount)}" for ln in plan.expense]
+        verdict = "LÃI" if plan.is_profit else "LỖ"
+        lines.append(f"\n→ {verdict}: {format_money(abs(plan.profit))}  (TK 4212)")
+        QMessageBox.information(
+            self, f"Xem trước kết chuyển · {period.label}", "\n".join(lines)
+        )
+
+    def _on_post_result(self) -> None:
+        from domain.services.result_service import ResultError
+
+        period = active_period()
+        service = self._result_service()
+        if service.is_posted(period.date_from, period.date_to):
+            confirm = QMessageBox.question(
+                self, "Kết chuyển lại",
+                f"Kỳ {period.label} đã kết chuyển rồi.\n"
+                "Kết chuyển lại sẽ thay thế các bút toán KC cũ. Tiếp tục?",
+            )
+            if confirm != QMessageBox.Yes:
+                return
+        try:
+            created = service.post(period.date_from, period.date_to)
+        except ResultError as exc:
+            QMessageBox.warning(self, "Không thể kết chuyển", str(exc))
+            return
+        self._refresh_result_note()
+        QMessageBox.information(
+            self, "Đã kết chuyển",
+            f"Đã tạo {len(created)} bút toán kết chuyển cho kỳ {period.label}:\n"
+            + "\n".join(f"   {e.ref} — {e.description}" for e in created)
+            + "\n\nXem ở Sổ nhật ký chung.",
+        )
+
+    def _on_unpost_result(self) -> None:
+        period = active_period()
+        confirm = QMessageBox.question(
+            self, "Hủy kết chuyển",
+            f"Xóa các bút toán kết chuyển (KC-…) của kỳ {period.label}?",
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        self._result_service().unpost(period.date_from, period.date_to)
+        self._refresh_result_note()
+        QMessageBox.information(self, "Đã hủy", "Đã xóa các bút toán kết chuyển của kỳ.")
 
     # ----- dữ liệu mẫu (demo) -------------------------------------------
 
@@ -349,7 +555,11 @@ class SettingsScreen(QWidget):
         card.add(self._client_secret_row_w)
         card.add(self._oauth_action_w)
 
-        card.add_layout(self._field_row("Thư mục", self._email_folder))
+        pick_folder_btn = Button("Chọn thư mục…", icon_name="invoice")
+        pick_folder_btn.clicked.connect(self._on_pick_folder)
+        folder_row = self._field_row("Thư mục", self._email_folder)
+        folder_row.addWidget(pick_folder_btn)
+        card.add_layout(folder_row)
         card.add_layout(self._field_row("Chu kỳ (phút)", self._email_poll))
 
         auto_row = QHBoxLayout()
@@ -440,6 +650,47 @@ class SettingsScreen(QWidget):
             QApplication.restoreOverrideCursor()
         QMessageBox.information(
             self, "Kiểm tra kết nối", "Kết nối hộp thư thành công.")
+
+    def _on_pick_folder(self) -> None:
+        """Liệt kê thư mục có thật trên hộp thư để người dùng chọn.
+
+        Cần thiết vì Gmail đặt tên thư mục theo ngôn ngữ tài khoản (hộp thư
+        tiếng Việt là ``[Gmail]/Thư đã gửi``, không phải ``[Gmail]/Sent Mail``)
+        nên không thể đoán mò khi gõ tay.
+        """
+        from data.email.imap_client import EmailFetchError, list_folders
+
+        config = self._read_email_form()
+        if not config.is_ready:
+            QMessageBox.warning(
+                self, "Chọn thư mục",
+                "Cần nhập đủ thông tin đăng nhập trước khi tải danh sách thư mục.")
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            folders = list_folders(config)
+        except EmailFetchError as exc:
+            QMessageBox.warning(self, "Chọn thư mục", str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if not folders:
+            QMessageBox.warning(
+                self, "Chọn thư mục", "Hộp thư không trả về thư mục nào.")
+            return
+        # Gắn nhãn thư mục Đã gửi — nơi chứa hóa đơn BÁN RA tự soạn gửi khách.
+        labels = [f"{f.name}{'   (Đã gửi)' if f.is_sent else ''}" for f in folders]
+        current = self._email_folder.text().strip()
+        index = next(
+            (i for i, f in enumerate(folders) if f.name == current), 0)
+        choice, ok = QInputDialog.getItem(
+            self, "Chọn thư mục",
+            "Thư mục cần quét (Đã gửi = hóa đơn bán ra, INBOX = hóa đơn mua vào):",
+            labels, index, False)
+        if not ok:
+            return
+        self._email_folder.setText(folders[labels.index(choice)].name)
 
     def _on_save_email(self) -> None:
         self._email_cfg.save(self._read_email_form())

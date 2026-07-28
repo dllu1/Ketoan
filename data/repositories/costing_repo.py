@@ -26,6 +26,9 @@ class CostingRepository:
             labor=Decimal(str(sheet["labor_pool"])),
             overhead=Decimal(str(sheet["overhead_pool"])),
             other=Decimal(str(sheet["other_pool"])),
+            labor_manual=bool(sheet["labor_manual"]),
+            overhead_manual=bool(sheet["overhead_manual"]),
+            other_manual=bool(sheet["other_manual"]),
         ) if sheet else CostPools()
 
         rows = self._conn.execute(
@@ -55,8 +58,14 @@ class CostingRepository:
             )
             self._conn.execute(
                 "INSERT INTO costing_sheet (period_key, labor_pool, overhead_pool, "
-                "other_pool) VALUES (?,?,?,?)",
-                (period_key, str(pools.labor), str(pools.overhead), str(pools.other)),
+                "other_pool, labor_manual, overhead_manual, other_manual) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (
+                    period_key,
+                    str(pools.labor), str(pools.overhead), str(pools.other),
+                    int(pools.labor_manual), int(pools.overhead_manual),
+                    int(pools.other_manual),
+                ),
             )
             self._conn.executemany(
                 "INSERT INTO costing_product (period_key, line_no, code, name, "

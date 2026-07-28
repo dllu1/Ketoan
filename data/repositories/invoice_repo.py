@@ -10,6 +10,7 @@ from domain.models.invoice import (
     Invoice,
     InvoiceKind,
     InvoiceLine,
+    InvoiceLineType,
     InvoiceStatus,
     PaymentMethod,
 )
@@ -53,6 +54,8 @@ def _row_to_line(row: sqlite3.Row) -> InvoiceLine:
         account_code=row["account_code"],
         debit_account=row["debit_account"],
         credit_account=row["credit_account"],
+        line_type=InvoiceLineType(row["line_type"]),
+        allocation_target=row["allocation_target"],
     )
 
 
@@ -206,13 +209,14 @@ class InvoiceRepository:
                 INSERT INTO invoice_line (
                     invoice_id, line_no, item_code, item_name, unit,
                     quantity, unit_price, vat_rate, account_code,
-                    debit_account, credit_account
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                    debit_account, credit_account, line_type, allocation_target
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     invoice.id, index, line.item_code, line.item_name,
                     line.unit, str(line.quantity), str(line.unit_price),
                     str(line.vat_rate), line.account_code,
                     line.debit_account, line.credit_account,
+                    line.line_type.value, line.allocation_target,
                 ),
             )

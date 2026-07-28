@@ -28,6 +28,7 @@ from domain.services.inventory_service import InventoryService
 from domain.services.material_sheet_service import _period_bounds, _unit_cost
 
 _SOURCE_PREFIX = "GT-NVL:"        # nguồn cho phần xuất NVL theo giá thành
+_PRODUCT_ACCOUNT = "155"          # kho thành phẩm
 _MATERIAL_ACCOUNT = "152"
 _ZERO = Decimal("0")
 _ONE = Decimal("1")
@@ -102,6 +103,34 @@ class MaterialIssueService:
         consumed = self.consumption(period_key, products)
         self._push(period_key, consumed)
         return consumed
+
+    def reprice_finished_goods(
+        self, period_key: str, products: list[tuple[str, Decimal, Decimal]]
+    ) -> Decimal:
+        """Đẩy giá thành đơn vị ngược về nhập kho 155 — **chỉ giá, không lượng**.
+
+        Số lượng thành phẩm thuộc về chứng từ nhập kho (Bảng kê TP hoặc phiếu
+        nhập thật); bảng giá thành chỉ quyết định *đơn giá*. Vì vậy ở đây ta định
+        giá lại các bút toán nhập 155 đã có trong kỳ thay vì tạo bút toán mới —
+        tạo mới chính là thứ từng làm số lượng bị cộng đôi.
+
+        ``products`` là ``(mã, số lượng, đơn giá giá thành)``; số lượng chỉ dùng
+        để tính tổng giá trị trả về (cho bút toán Nợ 155 / Có 154x). Là phép gán
+        nên chạy lại nhiều lần không cộng dồn.
+        """
+        start, end = _period_bounds(period_key)
+        total = _ZERO
+        for code, qty, unit_cost in products:
+            if not code or unit_cost <= _ZERO:
+                continue
+            self._inventory.reprice_in(
+                code, unit_cost,
+                date_from=start, date_to=end,
+                account_code=_PRODUCT_ACCOUNT,
+            )
+            if qty > _ZERO:
+                total += qty * unit_cost
+        return total
 
     def _push(
         self, period_key: str, consumed: dict[str, tuple[Decimal, Decimal]]

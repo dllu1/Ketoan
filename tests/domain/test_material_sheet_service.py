@@ -43,6 +43,25 @@ def _line(**kw) -> MaterialLine:
 # ----- pure model: derived closing balance --------------------------------
 
 
+def test_list_distinct_materials_dedupes_latest_period_wins(in_memory_db):
+    """NVL trùng mã ở nhiều kỳ → giữ tên/ĐVT của kỳ mới nhất, sắp theo mã."""
+    from data.repositories.material_sheet_repo import MaterialSheetRepository
+
+    repo = MaterialSheetRepository(in_memory_db)
+    repo.replace("2025-01", [_line(code="S20", name="Sắt cây 20", unit="Kg")])
+    repo.replace("2025-03", [
+        _line(code="S20", name="Sắt cây 20 (mới)", unit="Tấn"),
+        _line(code="S30", name="Sắt cây 30", unit="Kg"),
+        _line(code="  ", name="dòng trống"),   # mã trống → bỏ qua
+    ])
+
+    mats = repo.list_distinct_materials()
+    assert mats == [
+        ("S20", "Sắt cây 20 (mới)", "Tấn"),   # kỳ 2025-03 thắng
+        ("S30", "Sắt cây 30", "Kg"),
+    ]
+
+
 def test_closing_is_opening_plus_in_minus_out():
     line = _line(
         opening_qty=100, opening_value=1_000_000,

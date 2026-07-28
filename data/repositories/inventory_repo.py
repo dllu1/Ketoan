@@ -14,6 +14,7 @@ def _row_to_movement(row: sqlite3.Row) -> InventoryMovement:
         id=row["id"],
         item_code=row["item_code"],
         item_name=row["item_name"],
+        unit=(row["unit"] if "unit" in row.keys() else "") or "",
         account_code=row["account_code"],
         move_date=date.fromisoformat(str(row["move_date"])),
         kind=MovementKind(row["kind"]),
@@ -54,12 +55,12 @@ class InventoryRepository:
             cursor = self._conn.execute(
                 """
                 INSERT INTO inventory_movement (
-                    item_code, item_name, account_code, move_date, kind,
+                    item_code, item_name, unit, account_code, move_date, kind,
                     quantity, unit_cost, source_ref, note, created_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?)
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
-                    movement.item_code, movement.item_name,
+                    movement.item_code, movement.item_name, movement.unit,
                     movement.account_code, movement.move_date.isoformat(),
                     movement.kind.value, str(movement.quantity),
                     str(movement.unit_cost), movement.source_ref,
@@ -76,8 +77,42 @@ class InventoryRepository:
                 (source_ref,),
             )
 
+    def update_cost(self, movement_id: int, unit_cost: Decimal) -> None:
+        """Định giá lại một bút toán kho đã ghi.
+
+        Dùng khi kết chuyển giá vốn cuối kỳ: hàng xuất bán trong kỳ được định giá
+        lại theo đơn giá bình quân gia quyền cuối kỳ, để sổ kho (NXT) và sổ cái
+        (TK 155/156) luôn khớp nhau.
+        """
+        with self._conn:
+            self._conn.execute(
+                "UPDATE inventory_movement SET unit_cost = ? WHERE id = ?",
+                (str(unit_cost), movement_id),
+            )
+
     def delete(self, movement_id: int) -> None:
         with self._conn:
             self._conn.execute(
                 "DELETE FROM inventory_movement WHERE id = ?", (movement_id,)
             )
+
+    def delete_by_item(self, item_code: str) -> int:
+        """Xóa toàn bộ bút toán nhập/xuất kho của một mã hàng. Trả số dòng đã xóa."""
+        with self._conn:
+            cursor = self._conn.execute(
+                "DELETE FROM inventory_movement WHERE item_code = ?", (item_code,)
+            )
+        return cursor.rowcount
+
+    def delete_by_items(self, item_codes: list[str]) -> int:
+        """Xóa bút toán kho của nhiều mã hàng cùng lúc. Trả tổng số dòng đã xóa."""
+        codes = [c for c in item_codes if c]
+        if not codes:
+            return 0
+        placeholders = ",".join("?" * len(codes))
+        with self._conn:
+            cursor = self._conn.execute(
+                f"DELETE FROM inventory_movement WHERE item_code IN ({placeholders})",
+                codes,
+            )
+        return cursor.rowcount

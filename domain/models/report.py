@@ -69,6 +69,12 @@ class TrialBalanceRow:
     period_credit: Decimal = field(default_factory=lambda: _ZERO)
     closing_debit: Decimal = field(default_factory=lambda: _ZERO)
     closing_credit: Decimal = field(default_factory=lambda: _ZERO)
+    # Tài khoản tổng hợp: ``parent_code`` là mã cha (rỗng = tài khoản gốc);
+    # ``level`` là độ sâu trong cây (gốc = 0) để thụt lề khi hiển thị. Số của
+    # dòng cha đã cộng gộp cả con nên tổng cột chỉ cộng các dòng gốc.
+    parent_code: str = ""
+    level: int = 0
+    is_aggregate: bool = False
 
 
 @dataclass
@@ -77,7 +83,10 @@ class TrialBalance:
     rows: list[TrialBalanceRow] = field(default_factory=list)
 
     def _sum(self, attr: str) -> Decimal:
-        return sum((getattr(r, attr) for r in self.rows), _ZERO)
+        # Chỉ cộng các dòng gốc (không có tài khoản cha): số dư dòng cha đã gộp
+        # cả con, nên cộng cả cha lẫn con sẽ tính trùng. Khi chưa khai báo tổng
+        # hợp nào thì mọi dòng đều là gốc → tổng không đổi so với trước.
+        return sum((getattr(r, attr) for r in self.rows if not r.parent_code), _ZERO)
 
     @property
     def total_opening_debit(self) -> Decimal:

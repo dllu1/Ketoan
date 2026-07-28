@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QCompleter,
-    QDateEdit,
     QDialog,
     QFormLayout,
     QFrame,
@@ -17,7 +16,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QStyledItemDelegate,
+    QMessageBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -30,11 +29,22 @@ from domain.models.invoice import Invoice, InvoiceKind, InvoiceLine, InvoiceStat
 from domain.models.journal import EntryStatus, JournalEntry, JournalLine
 from domain.money import format_money, parse_money
 from ui.primitives.button import Button, ButtonVariant
+from ui.primitives.date_edit import DateEdit
+from ui.primitives.enter_nav import (
+    EnterNavDelegate,
+    install_form_enter_nav,
+    install_grid_enter_nav,
+)
 
 _COL_CODE, _COL_DESC, _COL_DEBIT, _COL_CREDIT = range(4)
 
+# Loại chứng từ kèm theo bút toán. Mua/Bán hàng là chứng từ thật nên BẮT BUỘC có
+# số hóa đơn mới cho ghi sổ; kết chuyển (KC-GV/KC-DT, khấu hao, phân bổ…) không
+# phát sinh hóa đơn nên số hóa đơn để tùy chọn.
+_KIND_TRANSFER = "TRANSFER"
 
-class _AccountDelegate(QStyledItemDelegate):
+
+class _AccountDelegate(EnterNavDelegate):
     """Editor for the TK column sharing a single completer/model."""
 
     def __init__(self, completer: QCompleter, parent: QWidget | None = None) -> None:
@@ -82,10 +92,8 @@ class EntryModal(QDialog):
         # ----- metadata --------------------------------------------------
         self._ref = QLineEdit()
         self._ref.setPlaceholderText("VD: PKT-0034")
-        self._date = QDateEdit()
-        self._date.setCalendarPopup(True)
-        self._date.setDisplayFormat("dd/MM/yyyy")
-        self._date.setDate(QDate.currentDate())
+        # DateEdit: bôi đen + Delete để xóa trắng rồi gõ tay cả ngày/tháng/năm.
+        self._date = DateEdit()
         self._description = QLineEdit()
         self._description.setPlaceholderText("Diễn giải chung của bút toán…")
 
@@ -101,25 +109,26 @@ class EntryModal(QDialog):
 
         # ----- optional invoice + goods (auto-routed to Bán hàng / Mua hàng) --
         # Two compact columns so the optional block doesn't crowd the dialog.
-        optional_label = QLabel("CHỨNG TỪ KÈM THEO (tùy chọn) · nhập Số hóa đơn để tự đẩy sang Bán/Mua hàng")
+        optional_label = QLabel("CHỨNG TỪ KÈM THEO · Mua/Bán hàng bắt buộc có số hóa đơn; kết chuyển thì không cần")
         optional_label.setObjectName("SectionLabel")
 
         self._invoice_no = QLineEdit()
-        self._invoice_no.setPlaceholderText("Để trống nếu không kèm")
         self._invoice_kind = QComboBox()
-        self._invoice_kind.addItem("Bán hàng (đầu ra)", InvoiceKind.SALE)
         self._invoice_kind.addItem("Mua hàng (đầu vào)", InvoiceKind.PURCHASE)
-        self._invoice_kind.setEnabled(False)
-        self._invoice_no.textChanged.connect(
-            lambda text: self._invoice_kind.setEnabled(bool(text.strip()))
-        )
+        self._invoice_kind.addItem("Bán hàng (đầu ra)", InvoiceKind.SALE)
+        self._invoice_kind.addItem("Kết chuyển (không có hóa đơn)", _KIND_TRANSFER)
+        # Mặc định Kết chuyển: bút toán tay (PKT điều chỉnh, khấu hao, phân bổ…)
+        # vẫn ghi sổ được ngay mà không bị đòi số hóa đơn.
+        self._invoice_kind.setCurrentIndex(self._invoice_kind.count() - 1)
+        self._invoice_kind.currentIndexChanged.connect(lambda _: self._sync_invoice_requirement())
 
         invoice_form = QFormLayout()
         invoice_form.setHorizontalSpacing(12)
         invoice_form.setVerticalSpacing(8)
         invoice_form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        invoice_form.addRow("Số hóa đơn", self._invoice_no)
+        self._invoice_no_label = QLabel("Số hóa đơn")
         invoice_form.addRow("Loại", self._invoice_kind)
+        invoice_form.addRow(self._invoice_no_label, self._invoice_no)
 
         self._item_code = QLineEdit()
         self._item_code.setPlaceholderText("VD: HH001")
@@ -177,6 +186,8 @@ class EntryModal(QDialog):
             header_item = self._table.horizontalHeaderItem(col)
             header_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._table.itemChanged.connect(lambda *_: self._recompute_balance())
+        # Enter = sang ô sửa được kế tiếp; hết bảng thì tự mở dòng mới.
+        install_grid_enter_nav(self._table, add_row=self._add_row)
 
         line_buttons = QHBoxLayout()
         btn_add = Button("+ Thêm dòng", icon_name="plus")
@@ -218,13 +229,39 @@ class EntryModal(QDialog):
         layout.addWidget(self._balance_label)
         layout.addLayout(footer)
 
+        # Enter ở ô nhập của chứng từ = sang ô sau (không bấm "Ghi sổ" nhầm).
+        install_form_enter_nav(self)
+
         if entry is not None:
             self._populate(entry)
             self._ref.setReadOnly(True)
         else:
             self._add_row()
             self._add_row()
+        self._sync_invoice_requirement()
         self._recompute_balance()
+
+    # ----- loại chứng từ kèm theo ----------------------------------------
+
+    def _selected_kind(self) -> InvoiceKind | None:
+        """``InvoiceKind`` cho mua/bán; ``None`` khi chọn Kết chuyển.
+
+        Qt trả userData của enum kiểu str về dưới dạng str thuần, nên phải ép lại
+        về ``InvoiceKind`` chứ không so sánh bằng ``is``.
+        """
+        data = self._invoice_kind.currentData()
+        if data == _KIND_TRANSFER:
+            return None
+        return InvoiceKind(data)
+
+    def _sync_invoice_requirement(self) -> None:
+        """Đánh dấu bắt buộc / tùy chọn cho ô Số hóa đơn theo loại đang chọn."""
+        required = self._selected_kind() is not None
+        self._invoice_no_label.setText("Số hóa đơn *" if required else "Số hóa đơn")
+        self._invoice_no.setPlaceholderText(
+            "Bắt buộc với mua/bán hàng" if required
+            else "Không bắt buộc — kết chuyển không có hóa đơn"
+        )
 
     # ----- row helpers --------------------------------------------------
 
@@ -293,8 +330,8 @@ class EntryModal(QDialog):
             self._add_row(line)
 
     def _qdate_to_date(self) -> date:
-        qd = self._date.date()
-        return date(qd.year(), qd.month(), qd.day())
+        # DateEdit tự diễn giải chuỗi nếu người dùng đang gõ tay dở.
+        return self._date.date_value()
 
     def _autofill_item(self) -> None:
         """Fill name / price from the directory when a known mã vật tư is typed."""
@@ -313,14 +350,32 @@ class EntryModal(QDialog):
             return Decimal("0")
 
     def _submit(self, status: EntryStatus) -> None:
+        # Mua / bán hàng là chứng từ thật: phải có số hóa đơn mới cho ghi sổ.
+        # Lưu nháp vẫn cho qua để kế toán ghi tạm rồi bổ sung số sau.
+        if status is EntryStatus.POSTED and self._missing_invoice_no():
+            QMessageBox.warning(
+                self, "Thiếu số hóa đơn",
+                f"Bút toán loại “{self._invoice_kind.currentText()}” phải có số "
+                "hóa đơn mới ghi sổ được.\n\n"
+                "Nhập Số hóa đơn, hoặc đổi Loại sang “Kết chuyển” nếu bút toán "
+                "này không kèm hóa đơn.",
+            )
+            self._invoice_no.setFocus()
+            return
         self._status = status
         self.accept()
+
+    def _missing_invoice_no(self) -> bool:
+        return (
+            self._selected_kind() is not None
+            and not self._invoice_no.text().strip()
+        )
 
     def entry(self) -> JournalEntry:
         entry = self._original or JournalEntry(ref="")
         entry.ref = self._ref.text().strip()
         entry.entry_date = self._qdate_to_date()
-        entry.description = self._description.text().strip()
+        entry.description = self._entry_description()
         entry.status = self._status
         entry.lines = []
         for row in range(self._table.rowCount()):
@@ -340,20 +395,33 @@ class EntryModal(QDialog):
             )
         return entry
 
+    def _entry_description(self) -> str:
+        """Diễn giải bút toán; kết chuyển có gõ số hóa đơn thì ghi kèm vào đây.
+
+        Kết chuyển không sinh chứng từ mua/bán nên số vừa gõ sẽ không đi đâu cả —
+        đính vào diễn giải để còn tra cứu được thay vì lặng lẽ bỏ đi.
+        """
+        description = self._description.text().strip()
+        invoice_no = self._invoice_no.text().strip()
+        if self._selected_kind() is not None or not invoice_no:
+            return description
+        tag = f"HĐ {invoice_no}"
+        if tag in description:            # sửa lại bút toán cũ: không nối chồng
+            return description
+        return f"{description} ({tag})" if description else tag
+
     def invoice_request(self) -> tuple[Invoice, InvoiceKind] | None:
         """Optional invoice to route into the Bán hàng / Mua hàng tab.
 
-        Returns ``None`` unless the user filled in a số hóa đơn — that field is
-        the trigger. The invoice is built as a DRAFT (no posting) so it appears
+        Returns ``None`` for kết chuyển (không có hóa đơn) and whenever số hóa
+        đơn is blank. The invoice is built as a DRAFT (no posting) so it appears
         in the matching tab as a document without double-counting the journal
         entry the user already typed here; they can ghi sổ it from that tab.
         """
+        kind = self._selected_kind()
         invoice_no = self._invoice_no.text().strip()
-        if not invoice_no:
+        if kind is None or not invoice_no:
             return None
-        # Coerce: Qt returns str-based enum userData as a plain str, which would
-        # make `kind is InvoiceKind.SALE` (in journal_screen) always false.
-        kind = InvoiceKind(self._invoice_kind.currentData())
         product = self._items.get(self._item_code.text().strip())
         line = InvoiceLine(
             item_code=self._item_code.text().strip(),

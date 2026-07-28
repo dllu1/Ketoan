@@ -17,10 +17,15 @@ from domain.services.invoice_import_service import (
 )
 
 
-class _FetchWorker(QThread):
-    """Chạy fetch_parsed (chỉ mạng) ngoài GUI thread."""
+class FetchWorker(QThread):
+    """Chạy fetch_parsed (chỉ mạng) ngoài GUI thread.
+
+    Dùng chung cho nền (EmailPoller) lẫn nút "Lấy từ email" thủ công — mọi thao
+    tác mạng phải nằm ở đây để GUI không đứng hình.
+    """
 
     fetched = Signal(object, int, object)  # items, max_uid, error|None
+    progress = Signal(int, int)  # đã tải, tổng số thư cần xét
 
     def __init__(self, importer: InvoiceImportService, config: EmailConfig) -> None:
         super().__init__()
@@ -29,10 +34,15 @@ class _FetchWorker(QThread):
 
     def run(self) -> None:  # noqa: D401 — QThread entrypoint
         try:
-            items, max_uid = self._importer.fetch_parsed(self._config)
+            items, max_uid = self._importer.fetch_parsed(
+                self._config, progress=self.progress.emit
+            )
             self.fetched.emit(items, max_uid, None)
         except Exception as exc:  # noqa: BLE001 — báo về main thread, không crash
             self.fetched.emit([], self._config.last_uid, exc)
+
+
+_FetchWorker = FetchWorker  # bí danh cũ
 
 
 class EmailPoller(QObject):

@@ -35,6 +35,7 @@ from domain.services.inventory_service import InventoryService
 from domain.services.material_sheet_service import _period_bounds, _unit_cost
 
 _SHEET_SOURCE_PREFIX = "BK-TP:"      # source tag for worksheet-pushed movements
+_COSTING_SOURCE_PREFIX = "GT-TP:"    # nhập kho TP do chính bảng giá thành đẩy ra
 _PRODUCT_ACCOUNT = "155"             # nhóm Thành phẩm (TT200)
 _ZERO = Decimal("0")
 
@@ -137,6 +138,92 @@ class ProductSheetService:
                 by_code[code] = line
             line.in_qty = row.quantity
             line.in_value = row.total_cost
+            line.recompute()
+            applied += 1
+        return applied
+
+    # ----- feed the costing sheet: SL nhập 155 → số lượng sản xuất ----------
+
+    def input_quantities(self, period_key: str) -> list[tuple[str, str, Decimal]]:
+        """``(mã, tên, SL nhập)`` thành phẩm trong kỳ theo cột Nhập·SL của bảng kê.
+
+        Bảng tính giá thành dùng hàm này để tự lấy số lượng sản xuất: "bảng kê
+        nhập bao nhiêu thì bảng giá thành hiện bấy nhiêu" — SL nhập kho 155 chính
+        là số lượng thành phẩm cần tính giá thành, rồi từ định mức ra tiền 15401.
+
+        Đọc đúng những gì cột Nhập·SL của bảng kê đang hiển thị: thành phẩm nhập
+        kho bằng chứng từ thật (dòng sổ kho) **và** dòng nhập tay đã lưu. Cố tình
+        **không** đọc phần nhập 155 do chính bảng giá thành đẩy ra (nguồn
+        ``GT-TP``) để tránh vòng lặp giá thành ↔ số lượng. Gộp theo mã, giữ tên
+        gặp đầu tiên, giữ thứ tự xuất hiện.
+        """
+        aggregated: dict[str, list] = {}
+
+        def add(code: str, name: str, qty: Decimal) -> None:
+            code = code.strip()
+            if not code or qty <= _ZERO:
+                return
+            if code in aggregated:
+                aggregated[code][1] += qty
+            else:
+                aggregated[code] = [name, qty]
+
+        for r in self._production_rows(period_key):
+            add(r.item_code, r.item_name, r.in_qty)
+        for line in self._repo.list_for_period(period_key):
+            add(line.code, line.name, line.in_qty)
+        return [(code, name, qty) for code, (name, qty) in aggregated.items()]
+
+    def _production_rows(self, period_key: str) -> list[NxtRow]:
+        """Dòng sổ kho 155 có nhập trong kỳ, trừ phần hai bảng tự đẩy ra.
+
+        Bỏ ``BK-TP:`` (bản sao sổ kho của chính dòng nhập tay — đọc thẳng từ
+        ``product_sheet_line`` rồi nên tính lần nữa là nhân đôi) và ``GT-TP:``
+        (nhập kho do bảng giá thành sinh ra — đọc lại sẽ thành vòng lặp).
+        """
+        start, end = _period_bounds(period_key)
+        rows = self._inventory.compute_nxt(
+            start, end,
+            exclude_source_prefix=(_SHEET_SOURCE_PREFIX, _COSTING_SOURCE_PREFIX),
+        )
+        return [
+            r for r in rows
+            if r.account_code == _PRODUCT_ACCOUNT and r.in_qty > _ZERO
+        ]
+
+    # ----- giá thành → Nhập·ĐG của bảng kê ----------------------------------
+
+    def apply_costing_prices(self, sheet: ProductSheet) -> int:
+        """Đưa giá thành đơn vị vừa tính về cột Nhập·ĐG của bảng kê.
+
+        Chiều ngược của :meth:`input_quantities`, và cố ý tách bạch theo cột để
+        hai bảng không giẫm chân nhau: **SL** luôn do bảng kê làm chủ (chảy sang
+        giá thành), **ĐG/TT nhập** do bảng giá thành làm chủ (chảy về đây). Vì
+        mỗi cột chỉ có một chiều nên chạy lại bao nhiêu lần cũng không lặp.
+
+        ``Nhập·ĐG`` là cột dẫn xuất (= TT ÷ SL) nên ta gán TT = SL × giá thành
+        đơn vị rồi để :meth:`ProductLine.recompute` suy ra đơn giá. Chỉ đụng dòng
+        nhập tay: dòng sổ kho đã mang sẵn đơn giá của chứng từ.
+
+        Trả về số dòng đã cập nhật.
+        """
+        costing = self._costing.load(sheet.period_key)
+        unit_costs = {
+            row.code.strip(): row.unit_cost
+            for row in costing.rows
+            if row.code.strip() and row.unit_cost > _ZERO
+        }
+        applied = 0
+        for line in sheet.lines:
+            if line.from_ledger or line.in_qty <= _ZERO:
+                continue
+            unit_cost = unit_costs.get(line.code.strip())
+            if unit_cost is None:
+                continue
+            value = line.in_qty * unit_cost
+            if line.in_value == value:
+                continue
+            line.in_value = value
             line.recompute()
             applied += 1
         return applied

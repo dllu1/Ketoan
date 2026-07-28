@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.period import active_period
 from data.repositories.account_repo import AccountRepository
 from data.repositories.fixed_asset_repo import FixedAssetRepository
 from data.repositories.journal_repo import JournalRepository
@@ -44,6 +45,12 @@ class AssetsScreen(QWidget):
             JournalService(JournalRepository()),
             AccountRepository(),
         )
+        # Cache theo id: chọn dòng / dựng lưới khấu hao không phải nạp lại toàn
+        # bộ danh mục từ DB mỗi lần con trỏ đổi ô.
+        self._assets: dict[int, FixedAsset] = {}
+        # True trong lúc dựng lại bảng: chặn currentCellChanged dựng lại lưới 12
+        # tháng nhiều lần cho mỗi lần nạp.
+        self._updating = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 24, 24, 24)
@@ -62,12 +69,15 @@ class AssetsScreen(QWidget):
         for y in range(today.year - 5, today.year + 2):
             self._year.addItem(str(y), y)
         self._year.setCurrentText(str(today.year))
-        self._year.currentIndexChanged.connect(lambda _: self._on_year_changed())
+        self._year.currentIndexChanged.connect(lambda _: self._on_period_changed())
 
         self._month = QComboBox()
         for i, label in enumerate(_MONTHS, start=1):
             self._month.addItem(label, i)
         self._month.setCurrentIndex(today.month - 1)
+        # Đổi tháng cũng phải nạp lại bảng: cột "Đã KH"/"Còn lại" tính đến kỳ
+        # đang chọn, nếu không người dùng bấm mà bảng đứng im như bị treo.
+        self._month.currentIndexChanged.connect(lambda _: self._on_period_changed())
 
         btn_post = Button("Ghi khấu hao kỳ", icon_name="check")
         btn_post.clicked.connect(self._on_post_depreciation)
@@ -85,9 +95,10 @@ class AssetsScreen(QWidget):
         toolbar.addWidget(btn_new)
         root.addLayout(toolbar)
 
-        self._table = QTableWidget(0, 8)
+        self._table = QTableWidget(0, 9)
         self._table.setHorizontalHeaderLabels(
-            ["Mã", "Tên tài sản", "TK", "Nguyên giá", "Số kỳ", "KH/tháng", "Đã KH", "Còn lại"]
+            ["Mã", "Tên tài sản", "TK", "TK chi phí", "Nguyên giá", "Số kỳ",
+             "KH/tháng", "Đã KH", "Còn lại"]
         )
         self._configure_table(self._table)
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
@@ -110,20 +121,50 @@ class AssetsScreen(QWidget):
 
     # ----- list/detail --------------------------------------------------
 
+    def on_activated(self) -> None:
+        """Chrome gọi mỗi lần mở màn hình hoặc đổi kỳ kế toán → nạp lại từ DB.
+
+        Thiếu hàm này màn hình chỉ nạp một lần lúc khởi động: TSCĐ mới thêm,
+        khấu hao vừa ghi hay dữ liệu vừa reset đều không hiện ra, nhìn như bị
+        treo."""
+        self._sync_period()
+        self._reload()
+
+    def _sync_period(self) -> None:
+        """Kéo bộ chọn Năm/Tháng về kỳ kế toán đang chọn ở thanh trên."""
+        period = active_period()
+        self._updating = True
+        index = self._year.findData(period.year)
+        if index < 0:  # kỳ nằm ngoài dải năm mặc định
+            self._year.addItem(str(period.year), period.year)
+            index = self._year.count() - 1
+        self._year.setCurrentIndex(index)
+        # "Cả năm" → lấy mốc cuối năm cho cột lũy kế.
+        self._month.setCurrentIndex((period.month or 12) - 1)
+        self._updating = False
+
     def _reload(self) -> None:
         query = self._search.text() if hasattr(self, "_search") else ""
+        year, month = self._year.currentData(), self._month.currentData()
+        keep_id = self._selected_id()
         assets = self._service.search(query)
-        today = date.today()
+        self._assets = {a.id: a for a in assets if a.id is not None}
+        self._updating = True
         self._table.setRowCount(0)
+        self._table.setHorizontalHeaderLabels(
+            ["Mã", "Tên tài sản", "TK", "TK chi phí", "Nguyên giá", "Số kỳ",
+             "KH/tháng", f"Đã KH đến {month:02d}/{year}", "Còn lại"]
+        )
         for asset in assets:
             row = self._table.rowCount()
             self._table.insertRow(row)
-            accumulated = asset.accumulated_through(today.year, today.month)
+            accumulated = asset.accumulated_through(year, month)
             book_value = asset.cost - accumulated
             cells = [
                 asset.code,
                 asset.name,
                 asset.asset_account,
+                asset.expense_account,
                 format_money(asset.cost),
                 str(asset.useful_life_months),
                 format_money(asset.monthly_depreciation),
@@ -135,12 +176,26 @@ class AssetsScreen(QWidget):
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
                 if col == 0:
                     item.setData(Qt.UserRole, asset.id)
-                if col >= 3:
+                if col >= 4:
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self._table.setItem(row, col, item)
+        self._updating = False
+        self._restore_selection(keep_id)
         self._show_schedule()
 
+    def _restore_selection(self, asset_id: int | None) -> None:
+        """Giữ nguyên tài sản đang xem sau khi nạp lại; mặc định chọn dòng đầu."""
+        for row in range(self._table.rowCount()):
+            item = self._table.item(row, 0)
+            if item is not None and item.data(Qt.UserRole) == asset_id:
+                self._table.setCurrentCell(row, 0)
+                return
+        if self._table.rowCount():
+            self._table.setCurrentCell(0, 0)
+
     def _show_schedule(self) -> None:
+        if self._updating:
+            return
         asset = self._selected()
         self._schedule.setRowCount(0)
         if asset is None:
@@ -162,8 +217,10 @@ class AssetsScreen(QWidget):
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self._schedule.setItem(row, col, item)
 
-    def _on_year_changed(self) -> None:
-        self._show_schedule()
+    def _on_period_changed(self) -> None:
+        if self._updating:  # combo đang được đồng bộ theo kỳ, chưa phải người dùng
+            return
+        self._reload()
 
     # ----- actions ------------------------------------------------------
 
@@ -214,17 +271,13 @@ class AssetsScreen(QWidget):
         self._reload()
 
     def _selected(self) -> FixedAsset | None:
+        asset_id = self._selected_id()
+        return None if asset_id is None else self._assets.get(asset_id)
+
+    def _selected_id(self) -> int | None:
         row = self._table.currentRow()
-        if row < 0:
-            return None
-        item = self._table.item(row, 0)
-        if item is None:
-            return None
-        asset_id = item.data(Qt.UserRole)
-        for asset in self._service.list_all():
-            if asset.id == asset_id:
-                return asset
-        return None
+        item = self._table.item(row, 0) if row >= 0 else None
+        return None if item is None else item.data(Qt.UserRole)
 
     @staticmethod
     def _configure_table(table: QTableWidget) -> None:

@@ -5,13 +5,18 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 
+# Khấu hao máy móc dùng cho sản xuất là chi phí sản xuất chung nên vào giá
+# thành: công ty hạch toán thẳng vào 15403 (cấp con của 154), 627 giữ cho bộ sổ
+# TT200. Các TK còn lại (641/642) là chi phí kỳ, không vào giá thành.
+PRODUCTION_EXPENSE_ACCOUNTS = ("15403", "627")
+
 
 @dataclass
 class FixedAsset:
     code: str
     name: str
     asset_account: str = "211"      # 211 hữu hình / 213 vô hình
-    expense_account: str = "642"    # TK chi phí khấu hao (627/641/642)
+    expense_account: str = "642"    # TK chi phí khấu hao (15403/627/641/642)
     cost: Decimal = field(default_factory=lambda: Decimal("0"))           # nguyên giá
     salvage_value: Decimal = field(default_factory=lambda: Decimal("0"))  # giá trị thu hồi
     useful_life_months: int = 12
@@ -23,6 +28,11 @@ class FixedAsset:
     updated_at: datetime = field(default_factory=datetime.now)
 
     # ----- straight-line depreciation --------------------------------------
+
+    @property
+    def feeds_production_cost(self) -> bool:
+        """Khấu hao của tài sản này có vào giá thành (chi phí SX chung) không."""
+        return self.expense_account in PRODUCTION_EXPENSE_ACCOUNTS
 
     @property
     def depreciable_base(self) -> Decimal:

@@ -9,12 +9,11 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDateEdit,
     QDoubleSpinBox,
     QFormLayout,
     QLabel,
@@ -28,6 +27,8 @@ from data.repositories.costing_repo import CostingRepository
 from data.repositories.item_repo import ItemRepository
 from domain.models.inventory import MovementKind
 from domain.services.costing_service import CostingService
+from ui.primitives.date_edit import DateEdit
+from ui.primitives.enter_nav import install_form_enter_nav
 
 _KIND_LABELS = {
     MovementKind.IN: "Nhập kho",
@@ -57,10 +58,8 @@ class StockModal(QDialog):
             self._kind.addItem(_KIND_LABELS[kind], kind)
         self._kind.currentIndexChanged.connect(self._auto_fill_cost)
 
-        self._date = QDateEdit()
-        self._date.setCalendarPopup(True)
-        self._date.setDisplayFormat("dd/MM/yyyy")
-        self._date.setDate(QDate.currentDate())
+        # DateEdit: bôi đen + Delete để xóa trắng rồi gõ tay cả ngày/tháng/năm.
+        self._date = DateEdit()
 
         self._quantity = QDoubleSpinBox()
         self._quantity.setMaximum(1e12)
@@ -94,6 +93,9 @@ class StockModal(QDialog):
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         layout.addWidget(buttons)
+
+        # Enter ở ô nhập = sang ô sau (không bấm "Save" nhầm).
+        install_form_enter_nav(self)
 
     # ----- giá thành auto-fill (nhập kho thành phẩm 155) -------------------
 
@@ -140,8 +142,8 @@ class StockModal(QDialog):
         return MovementKind(self._kind.currentData())
 
     def move_date(self) -> date:
-        qd = self._date.date()
-        return date(qd.year(), qd.month(), qd.day())
+        # DateEdit tự diễn giải chuỗi nếu người dùng đang gõ tay dở.
+        return self._date.date_value()
 
     def quantity(self) -> Decimal:
         return Decimal(str(self._quantity.value()))

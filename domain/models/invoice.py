@@ -39,6 +39,12 @@ class PaymentMethod(str, Enum):
         return {self.CASH: "111", self.BANK: "112", self.CREDIT: "331"}[self]
 
 
+class InvoiceLineType(str, Enum):
+    """Dòng hóa đơn là hàng nhập kho hay chi phí dịch vụ mua ngoài."""
+    ITEM = "ITEM"    # Nguyên vật liệu / hàng hóa — có SL + đơn giá, chạy nhập kho
+    COST = "COST"    # Phí dịch vụ (giao hàng, điện, nước…) — chỉ có thành tiền
+
+
 @dataclass
 class InvoiceLine:
     item_code: str
@@ -53,13 +59,26 @@ class InvoiceLine:
     # rồi tới mặc định theo loại chứng từ / hình thức thanh toán.
     debit_account: str = ""
     credit_account: str = ""
+    line_type: InvoiceLineType = InvoiceLineType.ITEM
+    # Chỉ dùng cho dòng chi phí: tài khoản sẽ nhận chi phí khi phân bổ / kết
+    # chuyển sau này (vd "155" giá thành thành phẩm, "154", "632"…).
+    allocation_target: str = ""
     line_no: int = 0
     id: int | None = None
     invoice_id: int | None = None
 
     @property
+    def is_cost(self) -> bool:
+        """Dòng chi phí dịch vụ mua ngoài (không vào kho)."""
+        return self.line_type is InvoiceLineType.COST
+
+    @property
     def amount(self) -> Decimal:
-        """Thành tiền trước thuế."""
+        """Thành tiền trước thuế.
+
+        Dòng chi phí không có số lượng thật: nó được lưu với ``quantity = 1`` và
+        ``unit_price =`` thành tiền, nên công thức chung vẫn đúng.
+        """
         return self.quantity * self.unit_price
 
     @property
@@ -116,3 +135,13 @@ class Invoice:
     def is_guest(self) -> bool:
         """A one-time sale not tied to a directory partner code."""
         return not self.partner_code.strip()
+
+    @property
+    def item_lines(self) -> list[InvoiceLine]:
+        """Dòng hàng hóa / nguyên vật liệu (chạy nhập–xuất–tồn)."""
+        return [ln for ln in self.lines if not ln.is_cost]
+
+    @property
+    def cost_lines(self) -> list[InvoiceLine]:
+        """Dòng chi phí dịch vụ mua ngoài (không vào kho)."""
+        return [ln for ln in self.lines if ln.is_cost]

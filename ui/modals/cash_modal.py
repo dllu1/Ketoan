@@ -4,11 +4,10 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from PySide6.QtCore import QDate, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QCompleter,
-    QDateEdit,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -23,6 +22,8 @@ from data.repositories.account_repo import AccountRepository
 from data.repositories.partner_repo import PartnerRepository
 from domain.models.cash import CASH_ACCOUNTS, CashKind
 from domain.models.partner import PartnerType
+from ui.primitives.date_edit import DateEdit
+from ui.primitives.enter_nav import install_form_enter_nav
 
 _KIND_TITLES = {CashKind.RECEIPT: "Phiếu thu", CashKind.PAYMENT: "Phiếu chi"}
 
@@ -54,10 +55,8 @@ class CashVoucherModal(QDialog):
 
         self._ref = QLineEdit()
         self._ref.setPlaceholderText("PT-0001" if kind is CashKind.RECEIPT else "PC-0001")
-        self._date = QDateEdit()
-        self._date.setCalendarPopup(True)
-        self._date.setDisplayFormat("dd/MM/yyyy")
-        self._date.setDate(QDate.currentDate())
+        # DateEdit: bôi đen + Delete để xóa trắng rồi gõ tay cả ngày/tháng/năm.
+        self._date = DateEdit()
 
         self._cash = QComboBox()
         for code, name in CASH_ACCOUNTS.items():
@@ -110,6 +109,9 @@ class CashVoucherModal(QDialog):
         layout.addLayout(form)
         layout.addWidget(buttons)
 
+        # Enter ở ô nhập = sang ô sau (không bấm "Save" nhầm).
+        install_form_enter_nav(self)
+
     def _refresh_counter_name(self, code: str) -> None:
         self._counter_name.setText(self._account_names.get(code.strip(), "—"))
 
@@ -134,8 +136,8 @@ class CashVoucherModal(QDialog):
         return Decimal(str(self._amount.value()))
 
     def entry_date(self) -> date:
-        qd = self._date.date()
-        return date(qd.year(), qd.month(), qd.day())
+        # DateEdit tự diễn giải chuỗi nếu người dùng đang gõ tay dở.
+        return self._date.date_value()
 
     def description(self) -> str:
         return self._description.text().strip()

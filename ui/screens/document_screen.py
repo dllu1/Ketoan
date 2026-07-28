@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMessageBox,
+    QProgressDialog,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -68,15 +69,20 @@ class DocumentScreen(QWidget):
         btn_edit.clicked.connect(self._on_edit)
         self._btn_post = Button("Ghi sổ", icon_name="check")
         self._btn_post.clicked.connect(self._on_post)
+        btn_post_all = Button("Ghi sổ tất cả", icon_name="check")
+        btn_post_all.clicked.connect(self._on_post_all)
         btn_delete = Button("Xóa", variant=ButtonVariant.DANGER, icon_name="trash")
         btn_delete.clicked.connect(self._on_delete)
         btn_email = Button("Lấy từ email", icon_name="invoice")
         btn_email.clicked.connect(self._on_fetch_email)
+        self._btn_email = btn_email
+        self._email_worker = None  # QThread đang chạy (nếu có)
 
         toolbar.addWidget(self._search, 1)
         toolbar.addWidget(btn_email)
         toolbar.addWidget(btn_edit)
         toolbar.addWidget(self._btn_post)
+        toolbar.addWidget(btn_post_all)
         toolbar.addWidget(btn_delete)
         toolbar.addWidget(btn_new)
         root.addLayout(toolbar)
@@ -109,6 +115,13 @@ class DocumentScreen(QWidget):
             ["Ngày", "Số CT", config.partner_header, "Tổng tiền", "TT", "Trạng thái"]
         )
         self._configure_table(self._table)
+        # Chọn nhiều chứng từ: Ctrl+click từng dòng, Shift+click cả dải, Ctrl+A
+        # chọn hết — rồi bấm Ghi sổ / Xóa để xử lý hàng loạt.
+        self._table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self._table.setToolTip(
+            "Ctrl+click chọn từng dòng · Shift+click chọn cả dải · Ctrl+A chọn tất "
+            "cả.\nSau đó bấm Ghi sổ hoặc Xóa để xử lý hàng loạt."
+        )
         self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self._table.currentCellChanged.connect(lambda *_: self._show_lines())
         self._table.itemDoubleClicked.connect(lambda *_: self._on_edit())
@@ -228,6 +241,13 @@ class DocumentScreen(QWidget):
         )
 
     def _on_edit(self) -> None:
+        # Sửa mở form chi tiết nên chỉ làm việc với đúng một chứng từ.
+        if len(self._selected_many()) > 1:
+            QMessageBox.information(
+                self, "Sửa chứng từ",
+                "Chỉ sửa được từng chứng từ một. Hãy chọn đúng một dòng.\n"
+                "Chọn nhiều dòng chỉ dùng để Ghi sổ hoặc Xóa hàng loạt.")
+            return
         invoice = self._selected()
         if invoice is None:
             return
@@ -242,50 +262,152 @@ class DocumentScreen(QWidget):
         )
 
     def _on_post(self) -> None:
-        invoice = self._selected()
-        if invoice is None or invoice.status is InvoiceStatus.POSTED:
+        """Ghi sổ mọi chứng từ đang chọn (một hoặc nhiều)."""
+        self._bulk_post(self._selected_many(), source="đang chọn")
+
+    def _on_post_all(self) -> None:
+        """Ghi sổ toàn bộ chứng từ đang hiển thị (theo kỳ + ô tìm kiếm)."""
+        self._bulk_post(self._visible_invoices(), source="trong danh sách")
+
+    def _bulk_post(self, invoices: list[Invoice], *, source: str) -> None:
+        targets = [i for i in invoices if i.status is not InvoiceStatus.POSTED]
+        if not targets:
+            QMessageBox.information(
+                self, "Ghi sổ",
+                f"Không có chứng từ nháp nào {source} để ghi sổ.")
             return
-        decision = self._resolve_partner(invoice)
+
+        # Hỏi MỘT lần cho cả lô thay vì mỗi chứng từ một hộp thoại.
+        decision = self._resolve_partners_bulk(targets)
         if decision is _CANCELLED:
             return
-        try:
-            self._service.post(invoice, save_new_partner=bool(decision))
-        except Exception as exc:  # noqa: BLE001 — surface to user
-            QMessageBox.warning(self, "Không thể ghi sổ", str(exc))
+        if len(targets) > 1 and QMessageBox.question(
+            self, "Ghi sổ hàng loạt",
+            f"Ghi sổ {len(targets)} chứng từ {source}?\n"
+            "Thao tác này tạo bút toán vào sổ nhật ký chung.",
+        ) != QMessageBox.Yes:
             return
+
+        done, errors = self._run_batch(
+            targets, "Đang ghi sổ…",
+            lambda inv: self._service.post(inv, save_new_partner=bool(decision)),
+        )
         self._reload()
+        self._report_batch("Ghi sổ", done, errors, verb="ghi sổ")
 
     def _on_delete(self) -> None:
-        invoice = self._selected()
-        if invoice is None:
+        invoices = self._selected_many()
+        if not invoices:
             return
-        if QMessageBox.question(self, "Xóa chứng từ", f"Xóa chứng từ '{invoice.ref}'?") != QMessageBox.Yes:
+        if len(invoices) == 1:
+            question = f"Xóa chứng từ '{invoices[0].ref}'?"
+        else:
+            question = (
+                f"Xóa {len(invoices)} chứng từ đang chọn?\n"
+                "Thao tác này không thể hoàn tác."
+            )
+        if QMessageBox.question(self, "Xóa chứng từ", question) != QMessageBox.Yes:
             return
-        try:
-            self._service.delete(invoice)
-        except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "Không thể xóa", str(exc))
-            return
+        done, errors = self._run_batch(
+            invoices, "Đang xóa…", self._service.delete)
         self._reload()
+        self._report_batch("Xóa chứng từ", done, errors, verb="xóa")
+
+    # ----- xử lý hàng loạt ------------------------------------------------
+
+    def _run_batch(self, invoices: list[Invoice], label: str, action):
+        """Chạy ``action`` cho từng chứng từ, có thanh tiến độ và nút Hủy.
+
+        Ghi DB phải ở main thread (SQLite dùng chung kết nối), nên giữ giao diện
+        sống bằng QProgressDialog thay vì đẩy sang thread.
+        """
+        errors: list[str] = []
+        done = 0
+        progress = QProgressDialog(label, "Hủy", 0, len(invoices), self)
+        progress.setWindowTitle(label)
+        progress.setMinimumDuration(0)  # hiện ngay, kể cả lô nhỏ
+        progress.setWindowModality(Qt.WindowModal)
+        for index, invoice in enumerate(invoices):
+            if progress.wasCanceled():
+                break
+            progress.setValue(index)
+            QApplication.processEvents()
+            try:
+                action(invoice)
+                done += 1
+            except Exception as exc:  # noqa: BLE001 — gom lại, báo cuối lô
+                errors.append(f"{invoice.ref}: {exc}")
+        progress.setValue(len(invoices))
+        return done, errors
+
+    def _report_batch(
+        self, title: str, done: int, errors: list[str], *, verb: str
+    ) -> None:
+        if not errors:
+            QMessageBox.information(self, title, f"Đã {verb} {done} chứng từ.")
+            return
+        detail = "\n".join(errors[:10])
+        if len(errors) > 10:
+            detail += f"\n… và {len(errors) - 10} lỗi khác."
+        QMessageBox.warning(
+            self, title,
+            f"Đã {verb} {done} chứng từ.\nKhông {verb} được {len(errors)}:\n\n{detail}",
+        )
 
     def _on_fetch_email(self) -> None:
-        """Lấy HĐĐT mới từ hộp thư → tạo chứng từ nháp, rồi nạp lại danh sách."""
+        """Lấy HĐĐT mới từ hộp thư → tạo chứng từ nháp, rồi nạp lại danh sách.
+
+        Pha mạng chạy trong QThread (app vẫn dùng được, không đứng hình); pha ghi
+        DB chạy lại trên main thread ở ``_on_email_fetched`` vì SQLite dùng chung
+        một kết nối.
+        """
+        from app.email_poller import FetchWorker
         from data.email.imap_client import EmailFetchError
+        from domain.services.email_config_service import EmailConfigService
         from domain.services.invoice_import_service import InvoiceImportService
 
-        QApplication.setOverrideCursor(Qt.WaitCursor)
-        try:
-            result = InvoiceImportService().run()
-        except EmailFetchError as exc:
-            QApplication.restoreOverrideCursor()
-            QMessageBox.warning(self, "Lấy hóa đơn từ email", str(exc))
+        if self._email_worker is not None and self._email_worker.isRunning():
+            return  # đang chạy → bỏ qua cú bấm thừa
+
+        self._email_cfg = EmailConfigService()
+        config = self._email_cfg.load()
+        if not config.is_ready:
+            QMessageBox.warning(
+                self, "Lấy hóa đơn từ email",
+                "Chưa cấu hình email. Vào Cấu hình › Email / Hóa đơn điện tử.")
             return
-        except Exception as exc:  # noqa: BLE001 — surface to user
-            QApplication.restoreOverrideCursor()
-            QMessageBox.warning(self, "Lấy hóa đơn từ email", f"Lỗi: {exc}")
+
+        self._importer = InvoiceImportService(email_config=self._email_cfg)
+        self._btn_email.setEnabled(False)
+        self._btn_email.setText("Đang lấy…")
+        worker = FetchWorker(self._importer, config)
+        worker.progress.connect(self._on_email_progress)
+        worker.fetched.connect(self._on_email_fetched)
+        worker.finished.connect(worker.deleteLater)
+        self._email_worker = worker
+        self._email_error_type = EmailFetchError
+        worker.start()
+
+    def _on_email_progress(self, done: int, total: int) -> None:
+        self._btn_email.setText(f"Đang lấy… {done}/{total}")
+
+    def _on_email_fetched(self, items, max_uid: int, error) -> None:
+        """Chạy trên main thread: ghi DB rồi báo kết quả."""
+        self._email_worker = None
+        self._btn_email.setText("Lấy từ email")
+        self._btn_email.setEnabled(True)
+
+        if error is not None:
+            text = (
+                str(error) if isinstance(error, self._email_error_type)
+                else f"Lỗi: {error}"
+            )
+            QMessageBox.warning(self, "Lấy hóa đơn từ email", text)
             return
-        finally:
-            QApplication.restoreOverrideCursor()
+
+        result = self._importer.persist(items)
+        if max_uid > self._email_cfg.load().last_uid:
+            self._email_cfg.set_last_uid(max_uid)
 
         msg = (
             f"Đã nhập {result.imported} hóa đơn mới.\n"
@@ -364,6 +486,63 @@ class DocumentScreen(QWidget):
         if answer == QMessageBox.Cancel:
             return _CANCELLED
         return answer == QMessageBox.Yes
+
+    def _resolve_partners_bulk(self, invoices: list[Invoice]):
+        """Hỏi một lần: có lưu các đối tác lạ của cả lô vào danh mục không?
+
+        Trả True/False, hoặc ``_CANCELLED`` nếu người dùng hủy cả thao tác.
+        """
+        unknown = [
+            inv for inv in invoices
+            if not inv.is_guest and not self._service.partner_exists(inv.partner_code)
+        ]
+        if not unknown:
+            return False
+        noun = self._cfg.partner_noun
+        if len(unknown) == 1:
+            label = unknown[0].partner_name or unknown[0].partner_code
+            text = (
+                f"{noun.capitalize()} '{label}' chưa có trong danh mục.\n"
+                f"Lưu vào danh mục {noun}?"
+            )
+        else:
+            text = (
+                f"{len(unknown)} chứng từ có {noun} chưa có trong danh mục.\n"
+                f"Lưu tất cả vào danh mục {noun}?"
+            )
+        answer = QMessageBox.question(
+            self, "Lưu vào danh mục?", text,
+            QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+        )
+        if answer == QMessageBox.Cancel:
+            return _CANCELLED
+        return answer == QMessageBox.Yes
+
+    def _selected_many(self) -> list[Invoice]:
+        """Chứng từ ở mọi dòng đang chọn, theo thứ tự hiển thị."""
+        model = self._table.selectionModel()
+        rows = sorted(i.row() for i in model.selectedRows()) if model else []
+        if not rows:
+            invoice = self._selected()
+            return [invoice] if invoice is not None else []
+        return self._invoices_at(rows)
+
+    def _visible_invoices(self) -> list[Invoice]:
+        """Toàn bộ chứng từ đang hiển thị (đã lọc theo kỳ + ô tìm kiếm)."""
+        return self._invoices_at(range(self._table.rowCount()))
+
+    def _invoices_at(self, rows) -> list[Invoice]:
+        """Nạp danh mục MỘT lần rồi tra theo id — tránh quét lại sổ mỗi dòng."""
+        by_id = {inv.id: inv for inv in self._service.list_all()}
+        found = []
+        for row in rows:
+            item = self._table.item(row, 0)
+            if item is None:
+                continue
+            invoice = by_id.get(item.data(Qt.UserRole))
+            if invoice is not None:
+                found.append(invoice)
+        return found
 
     def _selected(self) -> Invoice | None:
         row = self._table.currentRow()

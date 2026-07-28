@@ -76,6 +76,24 @@ _GUIDE: tuple[tuple[str, str | None, tuple[tuple[str, str, tuple[str, ...]], ...
                 ),
             ),
             (
+                "Nhập liệu bằng bàn phím (không cần chuột)", "Enter",
+                (
+                    "Trong các bảng nhập liệu, bấm Enter để nhảy sang ô kế tiếp — hết dòng thì tự xuống đầu dòng dưới.",
+                    "Ô chỉ đọc (vd cột Thành tiền được tính sẵn) sẽ tự động bị bỏ qua.",
+                    "Enter ở ô cuối bảng sẽ mở luôn một dòng mới, không phải bấm “+ Thêm dòng”.",
+                    "Ở phần thông tin chứng từ (Số CT, ngày, diễn giải…), Enter chuyển sang ô sau chứ không bấm nhầm nút Ghi sổ.",
+                ),
+            ),
+            (
+                "Gõ tay ô ngày tháng", "Ctrl A · Delete",
+                (
+                    "Bôi đen toàn bộ ô ngày (Ctrl+A) rồi bấm Delete để xóa trắng cả ngày/tháng/năm.",
+                    "Gõ liền ngày cần nhập: 01/02/2026, 1/2/2026, 01-02-2026 hoặc 01022026 đều được.",
+                    "Bấm Enter (hoặc Tab / bấm ra ngoài) để xác nhận; gõ sai thì ô tự quay về ngày cũ, không bao giờ để trống.",
+                    "Bấm Esc để hủy và giữ nguyên ngày đang có. Nút lịch bên phải vẫn dùng được như trước.",
+                ),
+            ),
+            (
                 "Tìm kiếm toàn cục", "Ctrl K",
                 (
                     "Bấm Ctrl+K hoặc nhấp ô tìm kiếm trên thanh công cụ.",
@@ -177,6 +195,19 @@ _GUIDE: tuple[tuple[str, str | None, tuple[tuple[str, str, tuple[str, ...]], ...
                     "Số đơn còn nháp hiển thị bằng huy hiệu trên mục Bán hàng ở thanh bên và ở chuông thông báo.",
                 ),
             ),
+            (
+                "Xử lý nhiều hóa đơn cùng lúc", "",
+                (
+                    "Chọn nhiều dòng: Ctrl+click chọn từng hóa đơn, Shift+click chọn cả dải liên tiếp, Ctrl+A chọn tất cả dòng đang hiển thị.",
+                    "Đang chọn nhiều dòng thì nút Ghi sổ và Xóa áp dụng cho TẤT CẢ dòng đã chọn. Riêng Sửa chỉ làm việc với một hóa đơn — chọn nhiều rồi bấm Sửa sẽ được nhắc chọn lại.",
+                    "Nút “Ghi sổ tất cả” ghi sổ mọi hóa đơn còn nháp ĐANG HIỂN THỊ — tức đã lọc theo kỳ kế toán và ô tìm kiếm, không phải toàn bộ dữ liệu. Muốn thu hẹp phạm vi thì gõ từ khóa vào ô tìm kiếm trước khi bấm.",
+                    "Nếu cả lô có khách hàng chưa khai báo, hệ thống chỉ hỏi MỘT lần “Lưu tất cả vào danh mục?” rồi áp dụng cho toàn lô — trả lời Có sẽ tạo hàng loạt khách hàng mới với mã tạm, nên cân nhắc trước.",
+                    "Trong lúc chạy có thanh tiến độ kèm nút Hủy; bấm Hủy thì dừng ở đó, các chứng từ đã ghi sổ vẫn giữ nguyên.",
+                    "Một hóa đơn lỗi không làm dừng cả lô: chạy xong hệ thống báo “Đã ghi sổ N chứng từ, không ghi sổ được M” kèm danh sách lỗi để bạn sửa riêng.",
+                    "Kinh nghiệm: với lô lớn (vài trăm hóa đơn nhập từ email), hãy chọn vài chứng từ ghi sổ thử, kiểm tra Sổ nhật ký chung và Danh mục khách hàng, rồi mới làm cả lô theo từng năm.",
+                    "Mọi thao tác trên áp dụng y hệt cho phân hệ Mua hàng (F5).",
+                ),
+            ),
         ),
     ),
     (
@@ -188,7 +219,18 @@ _GUIDE: tuple[tuple[str, str | None, tuple[tuple[str, str, tuple[str, ...]], ...
                 (
                     "Mở Mua hàng (F5) và bấm Hóa đơn mua để mở phiếu hóa đơn GTGT đầu vào.",
                     "Nhập Số CT, ngày, cách thanh toán và gõ Mã NCC (để trống = NCC vãng lai).",
-                    "Thêm các dòng hàng/dịch vụ mua vào giống như ở Bán hàng.",
+                    "Bảng trên — Nguyên vật liệu · Hàng hóa: mỗi dòng có số lượng và đơn giá, sẽ chạy nhập kho.",
+                    "Gõ Mã kho trên một dòng thì TK Nợ của dòng đó tự đổi theo (hàng ghi thẳng vào kho vừa chọn).",
+                ),
+            ),
+            (
+                "Chi phí dịch vụ khác (giao hàng, điện, nước…)", "",
+                (
+                    "Bảng dưới — Chi phí dịch vụ khác: dành cho khoản chỉ có thành tiền, không có số lượng / đơn giá.",
+                    "Mỗi dòng gồm Nội dung chi phí, TK Nợ (mặc định 154), TK Có (theo hình thức thanh toán) và Thành tiền.",
+                    "Ô “Phân bổ vào” là tài khoản sẽ nhận chi phí khi kết chuyển — mặc định 155 (giá thành thành phẩm), đổi được sang 154 / 632 / 641 / 642 / 242 hoặc TK bất kỳ.",
+                    "Ghi sổ chỉ lên bút toán Nợ chi phí / Có phải trả; chi phí không vào kho và chờ phân bổ theo tài khoản đã chọn.",
+                    "Hóa đơn thuần chi phí (vd hóa đơn tiền điện) không cần dòng hàng nào vẫn ghi sổ được.",
                 ),
             ),
             (
@@ -219,6 +261,14 @@ _GUIDE: tuple[tuple[str, str | None, tuple[tuple[str, str, tuple[str, ...]], ...
                 (
                     "Bấm Nhập kho, chọn Loại = “Tồn đầu kỳ” thay vì “Nhập kho”.",
                     "Nhập số lượng và đơn giá tồn có sẵn để làm số dư đầu cho mặt hàng.",
+                ),
+            ),
+            (
+                "Xem chi tiết một mặt hàng", "",
+                (
+                    "Ở thẻ Nhập–Xuất–Tồn, double-click vào dòng mặt hàng để mở bảng chi tiết.",
+                    "Cửa sổ chi tiết hiện tồn đầu kỳ / nhập / xuất / tồn cuối của kỳ đang lọc, kèm toàn bộ sổ phát sinh của riêng mặt hàng đó.",
+                    "Cột “Tồn sau” cộng dồn qua từng chứng từ để thấy tồn kho biến động theo thời gian.",
                 ),
             ),
             (
@@ -254,11 +304,15 @@ _GUIDE: tuple[tuple[str, str | None, tuple[tuple[str, str, tuple[str, ...]], ...
                 "Bảng tính giá thành sản phẩm", "",
                 (
                     "Trong Kho hàng (F6) chọn thẻ “Giá thành SP”.",
-                    "Nhập ba khoản chi phí chung của kỳ: Nhân công (15402), SX chung (154032), Chi phí khác (154033).",
+                    "Nhập hai khoản chi phí chung của kỳ: Nhân công (15402) và SX chung (15403). Ô 15403 gộp chi phí sản xuất chung (154032) và chi phí khác (154033) — hai tài khoản vẫn hạch toán riêng ở sổ nhật ký, bảng giá thành chỉ hiển thị gộp thành một cột.",
                     "Với mỗi sản phẩm, nhập Mã, tên và Số lượng sản xuất. Cột NVL (15401) tự tính cho sản phẩm ĐÃ khai định mức (Danh mục → Định mức): NVL = định mức × số lượng × đơn giá xuất bình quân của kỳ.",
                     "Sản phẩm chưa có định mức thì tự nhập tay số tiền NVL (nhưng sẽ không tách được theo mã và không phát sinh xuất kho).",
-                    "Hệ thống phân bổ nhân công / SX chung / chi phí khác cho từng sản phẩm theo tỷ lệ NVL, rồi tính Tổng giá thành và Đơn giá (= tổng ÷ số lượng).",
+                    "Hệ thống phân bổ nhân công (15402) và SX chung (15403) cho từng sản phẩm theo tỷ lệ NVL, rồi tính Tổng giá thành và Đơn giá (= tổng ÷ số lượng).",
+                    "Hai ô chi phí chung tự lấy số từ sổ nhật ký: hạch toán “Nợ 15402 / Có 334” cho tiền lương thì ô Nhân công tự có số, khỏi nhập hai lần. Ô SX chung lấy tổng phát sinh Nợ của 154032 và 154033.",
+                    "Khi bạn TỰ GÕ vào một ô chi phí chung, con số đó được ghi nhớ và giữ nguyên — mở lại thẻ hay lưu bao nhiêu lần cũng không đổi, trừ khi chính bạn sửa lại. Muốn quay về số theo sổ thì xóa trắng ô rồi bấm Lưu.",
+                    "Nút “Lấy KH máy SX (15403)” cộng khấu hao máy móc sản xuất của kỳ vào ô SX chung (máy phải khai “TK chi phí KH” = 15403 ở Tài sản cố định). Nếu khấu hao kỳ đó ĐÃ được ghi sổ thì phần mềm cảnh báo, vì số ấy vốn đã nằm sẵn trong ô — cộng nữa là tính hai lần.",
                     "Bấm Lưu: bảng giá thành được lưu cho kỳ, ĐỒNG THỜI nguyên vật liệu tiêu hao tự trừ vào cột Xuất kho 152 theo mã từng loại (xem ở Nhập–Xuất–Tồn). Lưu lại là làm mới, không cộng dồn.",
+                    "Lưu cũng ghi hai bút toán khép kín: “Nợ 15401 / Có 152” (xuất NVL) và “Nợ 155 / Có 15401·15402·154032·154033” (kết chuyển sang thành phẩm). Vế Có tách đúng từng tài khoản nên 154032 và 154033 đều tất toán về 0, dù bảng chỉ hiển thị gộp một cột 15403.",
                 ),
             ),
             (
@@ -444,7 +498,7 @@ _GUIDE: tuple[tuple[str, str | None, tuple[tuple[str, str, tuple[str, ...]], ...
                     "Vào Cấu hình › Email / Hóa đơn điện tử.",
                     "Chọn nhà cung cấp (Gmail, Yahoo hoặc IMAP tùy chỉnh) — máy chủ và cổng tự điền sẵn cho Gmail/Yahoo.",
                     "Xác thực: với Gmail nên chọn OAuth (bấm “Đăng nhập Google”) hoặc dùng “App Password” 16 ký tự (bật Xác minh 2 bước rồi tạo trong phần bảo mật của Google). KHÔNG dùng mật khẩu đăng nhập thường. Thông tin chỉ lưu trên máy này.",
-                    "Chọn Thư mục cần quét: để INBOX nếu lấy hóa đơn MUA VÀO (cổng HĐĐT gửi về hộp thư); đổi thành [Gmail]/Sent Mail nếu lấy hóa đơn BÁN RA do bạn tự soạn email gửi khách.",
+                    "Chọn Thư mục cần quét: để INBOX nếu lấy hóa đơn MUA VÀO (cổng HĐĐT gửi về hộp thư); đổi sang thư mục Đã gửi nếu lấy hóa đơn BÁN RA do bạn tự soạn email gửi khách. Đừng gõ tay — bấm “Chọn thư mục…” để lấy đúng tên từ hộp thư, vì Gmail đặt tên theo ngôn ngữ tài khoản ([Gmail]/Thư đã gửi với tài khoản tiếng Việt, [Gmail]/Sent Mail với tiếng Anh).",
                     "App tự phân loại mua/bán theo MST đã khai ở Thông tin công ty (MST người bán trùng công ty → hóa đơn bán ra) — nhớ khai MST trước.",
                     "Bấm Kiểm tra kết nối để chắc chắn đăng nhập được, rồi bấm Lưu cấu hình.",
                     "Lấy thủ công: mở Bán hàng / Mua hàng rồi bấm “Lấy từ email”. Hoặc tích “Tự động kiểm tra hộp thư định kỳ” + đặt Chu kỳ (phút) để app tự tải nền.",

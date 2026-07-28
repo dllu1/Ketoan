@@ -7,6 +7,7 @@ hidden until the user deliberately picks a month.
 """
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
 from datetime import date
 
@@ -27,6 +28,19 @@ class Period:
         if self.month is None:
             return str(self.year)
         return f"{self.year}-{self.month:02d}"
+
+    @property
+    def date_from(self) -> date:
+        """Ngày đầu kỳ — 01/01 khi chọn cả năm."""
+        return date(self.year, self.month or 1, 1)
+
+    @property
+    def date_to(self) -> date:
+        """Ngày cuối kỳ — 31/12 khi chọn cả năm."""
+        if self.month is None:
+            return date(self.year, 12, 31)
+        return date(self.year, self.month,
+                    calendar.monthrange(self.year, self.month)[1])
 
     @property
     def label(self) -> str:

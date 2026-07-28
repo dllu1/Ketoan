@@ -27,15 +27,32 @@ _ZERO = Decimal("0")
 
 @dataclass(frozen=True)
 class CostPools:
-    """The three non-material cost pools shared by the whole sheet."""
+    """The three non-material cost pools shared by the whole sheet.
+
+    Mỗi pool đi kèm cờ ``*_manual``: người dùng đã tự gõ số vào ô đó hay chưa.
+    Pool đã đánh dấu manual thì bảng giá thành giữ nguyên số của người dùng thay
+    vì lấy lại từ sổ cái mỗi lần mở tab — xem ``CostingView._merge_pools``.
+    """
 
     labor: Decimal = _ZERO       # 15402 — nhân công / chi phí tương ứng
     overhead: Decimal = _ZERO    # 154032 — chi phí sản xuất chung
     other: Decimal = _ZERO       # 154033 — chi phí khác
+    labor_manual: bool = False
+    overhead_manual: bool = False
+    other_manual: bool = False
 
     @property
     def total(self) -> Decimal:
         return self.labor + self.overhead + self.other
+
+    @property
+    def manual_flags(self) -> dict[str, bool]:
+        """Cờ sửa tay theo tên pool ('labor' / 'overhead' / 'other')."""
+        return {
+            "labor": self.labor_manual,
+            "overhead": self.overhead_manual,
+            "other": self.other_manual,
+        }
 
 
 @dataclass
@@ -85,6 +102,32 @@ class CostingRow:
             return _ZERO
         return (component / self.quantity).quantize(Decimal("1"))
 
+    # Đơn giá từng thành phần, khớp các cột "…/sp" của Bảng tính giá thành in ra.
+    # Công ty gộp SXC (154032) + Khác (154033) thành một cấp đơn giá "15403/sp".
+    @property
+    def unit_material(self) -> Decimal:
+        """15401/sp — đơn giá NVL trực tiếp."""
+        return self.unit_of(self.material_cost)
+
+    @property
+    def unit_labor(self) -> Decimal:
+        """15402/sp — đơn giá nhân công."""
+        return self.unit_of(self.labor_cost)
+
+    @property
+    def unit_overhead_other(self) -> Decimal:
+        """15403/sp — đơn giá (SX chung + chi phí khác) gộp."""
+        return self.unit_of(self.overhead_cost + self.other_cost)
+
+    @property
+    def unit_components_sum(self) -> Decimal:
+        """154/Sp (cột đơn giá) = tổng ba đơn giá thành phần đã làm tròn.
+
+        Có thể lệch vài đồng so với :attr:`unit_cost` (tổng ÷ SL) do làm tròn
+        từng thành phần — đúng như hai cột "154/Sp" trên tờ in.
+        """
+        return self.unit_material + self.unit_labor + self.unit_overhead_other
+
 
 @dataclass
 class CostingSheet:
@@ -115,3 +158,74 @@ class CostingSheet:
     @property
     def grand_total(self) -> Decimal:
         return sum((r.total_cost for r in self.rows), _ZERO)
+
+    @property
+    def total_allocated(self) -> Decimal:
+        """Tổng ba pool đã thực sự phân bổ vào các sản phẩm."""
+        return self.total_labor + self.total_overhead + self.total_other
+
+    @property
+    def unallocated_pools(self) -> Decimal:
+        """Phần pool KHÔNG vào được giá thành (thường do Σ NVL = 0).
+
+        Phân bổ dựa trên tỷ lệ NVL, nên khi cả kỳ không có đồng NVL nào thì nhân
+        công / SX chung / khác không có tiêu thức để chia và bị bỏ ra ngoài giá
+        thành. Bảng giá thành cảnh báo số này để kế toán không mất tiền pool mà
+        không hay biết.
+        """
+        return self.pools.total - self.total_allocated
+
+
+# ----- Bảng tính NVL trực tiếp (TK 15401) — ma trận SP × loại NVL -----------
+# Phần chi tiết của cột NVL (15401): mỗi thành phẩm tiêu hao bao nhiêu tiền của
+# từng loại nguyên vật liệu (theo định mức × SL × đơn giá xuất bình quân).
+
+
+@dataclass(frozen=True)
+class MaterialCell:
+    """Lượng và giá trị một loại NVL dùng cho một sản phẩm."""
+
+    qty: Decimal = _ZERO
+    value: Decimal = _ZERO
+
+
+@dataclass
+class MaterialMatrixRow:
+    """Một sản phẩm với phần tiêu hao NVL tách theo mã NVL."""
+
+    product_code: str
+    product_name: str
+    quantity: Decimal
+    cells: dict[str, MaterialCell] = field(default_factory=dict)
+
+    def value_of(self, material_code: str) -> Decimal:
+        cell = self.cells.get(material_code)
+        return cell.value if cell else _ZERO
+
+    def qty_of(self, material_code: str) -> Decimal:
+        cell = self.cells.get(material_code)
+        return cell.qty if cell else _ZERO
+
+    @property
+    def total_value(self) -> Decimal:
+        """Cột "Cộng" — tổng NVL của SP, khớp cột 15401 bên Bảng giá thành."""
+        return sum((c.value for c in self.cells.values()), _ZERO)
+
+
+@dataclass
+class MaterialMatrix:
+    period_key: str
+    materials: list[str] = field(default_factory=list)          # cột, đã sắp xếp
+    material_names: dict[str, str] = field(default_factory=dict)
+    unit_prices: dict[str, Decimal] = field(default_factory=dict)  # ĐG xuất / NVL
+    rows: list[MaterialMatrixRow] = field(default_factory=list)
+
+    def material_qty(self, material_code: str) -> Decimal:
+        return sum((r.qty_of(material_code) for r in self.rows), _ZERO)
+
+    def material_value(self, material_code: str) -> Decimal:
+        return sum((r.value_of(material_code) for r in self.rows), _ZERO)
+
+    @property
+    def grand_total(self) -> Decimal:
+        return sum((r.total_value for r in self.rows), _ZERO)

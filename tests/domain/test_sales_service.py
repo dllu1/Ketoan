@@ -86,8 +86,9 @@ def test_post_generates_inventory_out_and_balanced_journal(in_memory_db):
     # Dr 131 = 165000 (150000 + 10% VAT); Cr 511 150000 + Cr 3331 15000.
     debit_131 = next(l for l in entry.lines if l.account_code == "131")
     assert debit_131.debit == Decimal("165000")
-    cogs = next(l for l in entry.lines if l.account_code == "632")
-    assert cogs.debit == Decimal("100000")  # 10 * 10000 avg cost
+    # Giá vốn KHÔNG ghi lúc bán nữa — nó được kết chuyển cuối kỳ (KC-GV) theo đơn
+    # giá bình quân cuối kỳ, xem CogsService. Hóa đơn chỉ có doanh thu + thuế.
+    assert {l.account_code for l in entry.lines} == {"131", "511", "3331"}
 
 
 def test_receivable_line_carries_partner_code(in_memory_db):
@@ -202,11 +203,13 @@ def test_duplicate_ref_rejected(in_memory_db):
 
 def test_definition_accounts_override_sales_posting(in_memory_db):
     """TK Nợ/Có chọn tay + mã kho trên dòng định tuyến lại bút toán bán hàng."""
+    from data.repositories.inventory_repo import InventoryRepository
+
     _seed_stock(in_memory_db)  # HH001: 100 @ 10.000, nhập kho mặc định 156
     sales, inventory, journal = _service(in_memory_db)
 
     inv = _invoice(ref="HD-DK")
-    inv.lines[0].account_code = "152"  # giá vốn ghi Có kho 152
+    inv.lines[0].account_code = "152"  # xuất kho ghi vào kho 152
     inv.debit_account = "111"          # thu tiền mặt thay vì 131
     inv.credit_account = "5111"        # doanh thu chi tiết thay vì 511
     sales.create(inv)
@@ -217,5 +220,10 @@ def test_definition_accounts_override_sales_posting(in_memory_db):
     assert entry is not None and entry.is_balanced
     assert next(l for l in entry.lines if l.account_code == "111").debit == Decimal("165000")
     assert next(l for l in entry.lines if l.account_code == "5111").credit == Decimal("150000")
-    assert next(l for l in entry.lines if l.account_code == "152").credit == Decimal("100000")
     assert not any(l.account_code in ("131", "511") for l in entry.lines)
+    # Mã kho trên dòng vẫn định tuyến phần XUẤT KHO (giá vốn nay kết chuyển cuối
+    # kỳ nên không còn dòng Có 152 trong bút toán bán hàng).
+    out = next(m for m in InventoryRepository(in_memory_db).list_all()
+               if m.source_ref == "HD-DK")
+    assert out.account_code == "152"
+    assert out.quantity == Decimal("10")

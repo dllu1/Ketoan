@@ -19,6 +19,7 @@ def _row_to_line(row: sqlite3.Row) -> BomLine:
         material_code=row["material_code"],
         quantity_per=Decimal(str(row["quantity_per"])),
         note=row["note"],
+        pieces_per_pack=Decimal(str(row["pieces_per_pack"])),
     )
 
 
@@ -45,10 +46,12 @@ class BomRepository:
                 "DELETE FROM bom_line WHERE product_code = ?", (product_code,)
             )
             self._conn.executemany(
-                "INSERT INTO bom_line (product_code, material_code, quantity_per, note) "
-                "VALUES (?,?,?,?)",
+                "INSERT INTO bom_line "
+                "(product_code, material_code, quantity_per, note, pieces_per_pack) "
+                "VALUES (?,?,?,?,?)",
                 [
-                    (product_code, ln.material_code, str(ln.quantity_per), ln.note)
+                    (product_code, ln.material_code, str(ln.quantity_per), ln.note,
+                     str(ln.pieces_per_pack))
                     for ln in lines
                 ],
             )

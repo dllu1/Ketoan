@@ -34,6 +34,7 @@ from domain.services.product_sheet_service import (
     ProductSheetService,
 )
 from ui.primitives.button import Button, ButtonVariant
+from ui.primitives.enter_nav import install_grid_enter_nav
 from ui.screens.material_sheet_view import _fmt_qty, period_key
 
 _NEGATIVE = QColor("#ef4444")  # tồn cuối kỳ âm — không hợp lệ
@@ -98,6 +99,8 @@ class ProductSheetView(QWidget):
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
         header.setSectionResizeMode(_NAME, QHeaderView.Stretch)
         self._table.itemChanged.connect(self._on_item_changed)
+        # Enter = sang ô sửa được kế tiếp; hết bảng thì tự mở dòng mới.
+        install_grid_enter_nav(self._table, add_row=self._add_row)
         root.addWidget(self._table, 1)
 
         self._summary = QLabel()
@@ -114,15 +117,19 @@ class ProductSheetView(QWidget):
         self._updating = True
         self._table.setRowCount(0)
         sheet = self._service.load(period_key())
+        # Giá thành vừa tính bên tab Giá thành SP tự chảy về cột Nhập·ĐG. SL vẫn
+        # do bảng kê này làm chủ, nên hai bảng không ghi đè lẫn nhau.
+        self._service.apply_costing_prices(sheet)
         for line in sheet.lines:
             self._add_row(line)
         if not sheet.lines:
             self._add_row()
         self._updating = False
         self._caption.setText(
-            f"Kỳ: {active_period().label}  ·  Nhập·TT = giá thành trong kỳ  ·  "
-            "Xuất·ĐG = (TT đầu + TT nhập) ÷ (SL đầu + SL nhập)  ·  "
-            "Tồn đầu kỳ = tồn cuối kỳ trước  ·  Dòng xám = đồng bộ từ sổ kho"
+            f"Kỳ: {active_period().label}  ·  Nhập·SL nhập ở đây sẽ kéo thành phẩm "
+            "sang bảng Giá thành SP  ·  Nhập·ĐG tự lấy lại giá thành đơn vị vừa "
+            "tính  ·  Xuất·ĐG = (TT đầu + TT nhập) ÷ (SL đầu + SL nhập)  ·  "
+            "Dòng xám = đồng bộ từ sổ kho"
         )
         self._recompute_all()
 

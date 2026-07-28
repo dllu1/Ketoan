@@ -31,6 +31,7 @@ from domain.services.material_sheet_service import (
     MaterialSheetService,
 )
 from ui.primitives.button import Button, ButtonVariant
+from ui.primitives.enter_nav import install_grid_enter_nav
 
 _NEGATIVE = QColor("#ef4444")  # tồn cuối kỳ âm — không hợp lệ
 _LEDGER = QColor("#64748b")    # dòng đồng bộ từ sổ kho (chỉ đọc)
@@ -103,12 +104,17 @@ class MaterialSheetView(QWidget):
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
         header.setSectionResizeMode(_NAME, QHeaderView.Stretch)
         self._table.itemChanged.connect(self._on_item_changed)
+        # Enter = sang ô sửa được kế tiếp; hết bảng thì tự mở dòng mới.
+        install_grid_enter_nav(self._table, add_row=self._add_row)
         root.addWidget(self._table, 1)
 
         self._summary = QLabel()
         self._summary.setObjectName("BalanceBar")
         self._summary.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         root.addWidget(self._summary)
+
+        # dòng bảng → (SL, TT) NVL đã xuất theo giá thành, để tách khỏi xuất tay.
+        self._issued: dict[int, tuple[Decimal, Decimal]] = {}
 
         self.reload()
 
@@ -118,6 +124,7 @@ class MaterialSheetView(QWidget):
         """(Re)load the worksheet for the active period from the database."""
         self._updating = True
         self._table.setRowCount(0)
+        self._issued.clear()
         sheet = self._service.load(period_key())
         for line in sheet.lines:
             self._add_row(line)
@@ -126,8 +133,9 @@ class MaterialSheetView(QWidget):
         self._updating = False
         self._caption.setText(
             f"Kỳ: {active_period().label}  ·  Tồn cuối kỳ = Đầu kỳ + Nhập − Xuất "
-            "(không được âm)  ·  Dòng xám = đồng bộ từ sổ kho (Nhập–Xuất–Tồn); "
-            "vật tư nhập tay sẽ tự xuất hiện ở NXT khi lưu"
+            "(không được âm)  ·  Cột Xuất đã gồm NVL tiêu hao theo định mức khi "
+            "lưu bảng Giá thành SP (ô xám = số dẫn xuất)  ·  Dòng xám = đồng bộ "
+            "từ sổ kho; vật tư nhập tay sẽ tự xuất hiện ở NXT khi lưu"
         )
         self._recompute_all()
 
@@ -149,18 +157,31 @@ class MaterialSheetView(QWidget):
                 format_money(line.opening_value),
                 _fmt_qty(line.in_price), _fmt_qty(line.in_qty),
                 format_money(line.in_value),
-                _fmt_qty(line.out_price), _fmt_qty(line.out_qty),
-                format_money(line.out_value),
+                _fmt_qty(line.out_price), _fmt_qty(line.total_out_qty),
+                format_money(line.total_out_value),
                 "", "",
             ]
+        # Cột Xuất hiển thị GỘP cả phần xuất theo giá thành (GT-NVL). Nhớ lại
+        # phần đó theo dòng để _line_at trừ ra khi đọc ngược — nếu không, lưu
+        # bảng kê sẽ đẩy nó vào sổ kho lần nữa và trừ kho hai lần.
+        issued = (
+            (line.issued_qty, line.issued_value) if line is not None
+            else (Decimal("0"), Decimal("0"))
+        )
+        self._issued[row] = issued
+        has_issued = issued[0] > Decimal("0") or issued[1] > Decimal("0")
         for col, value in enumerate(values):
             item = QTableWidgetItem(value)
             if col in _NUM_COLS or col in _CLOSING_COLS or col == _STT:
                 item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             # STT + closing are always derived; ledger-synced rows are read-only
-            # in full (their numbers come from the inventory ledger).
+            # in full (their numbers come from the inventory ledger). Cột Xuất của
+            # vật tư đã tiêu hao theo định mức cũng là số dẫn xuất → khóa lại.
             if col == _STT or col in _CLOSING_COLS or from_ledger:
                 item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+            elif has_issued and col in (_X_PRICE, _X_QTY, _X_VAL):
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                item.setForeground(_LEDGER)
             if from_ledger and col not in _CLOSING_COLS and col != _STT:
                 item.setForeground(_LEDGER)
             if col == _CODE:
@@ -239,6 +260,11 @@ class MaterialSheetView(QWidget):
     def _line_at(self, row: int) -> MaterialLine:
         code_item = self._table.item(row, _CODE)
         from_ledger = bool(code_item.data(Qt.UserRole)) if code_item else False
+        # Ô Xuất đang hiển thị gộp (tay + theo giá thành) → tách lại phần tay,
+        # vì chỉ phần tay mới được lưu và đẩy sang sổ kho.
+        issued_qty, issued_value = self._issued.get(
+            row, (Decimal("0"), Decimal("0"))
+        )
         return MaterialLine(
             code=self._cell(row, _CODE),
             name=self._cell(row, _NAME),
@@ -250,8 +276,10 @@ class MaterialSheetView(QWidget):
             in_qty=self._num(row, _I_QTY),
             in_value=self._num(row, _I_VAL),
             out_price=self._num(row, _X_PRICE),
-            out_qty=self._num(row, _X_QTY),
-            out_value=self._num(row, _X_VAL),
+            out_qty=self._num(row, _X_QTY) - issued_qty,
+            out_value=self._num(row, _X_VAL) - issued_value,
+            issued_qty=issued_qty,
+            issued_value=issued_value,
             from_ledger=from_ledger,
         )
 

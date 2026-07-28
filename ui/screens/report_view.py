@@ -14,7 +14,6 @@ from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QDateEdit,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -27,9 +26,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.period import active_period
 from domain.models.report import ReportPeriod
 from reports.report_tables import ReportDocument, format_cell
 from ui.primitives.button import Button, ButtonVariant
+from ui.primitives.date_edit import DateEdit
 from ui.primitives.segmented import Segmented
 
 
@@ -129,14 +130,32 @@ class ReportViewScreen(QWidget):
         return bar
 
     @staticmethod
-    def _make_date(value: QDate) -> QDateEdit:
-        edit = QDateEdit()
-        edit.setCalendarPopup(True)
-        edit.setDisplayFormat("dd/MM/yyyy")
-        edit.setDate(value)
-        return edit
+    def _make_date(value: QDate) -> DateEdit:
+        # DateEdit: bôi đen + Delete để xóa trắng rồi gõ tay cả ngày/tháng/năm.
+        return DateEdit(value=value)
 
     # ----- build + render ---------------------------------------------------
+
+    def on_activated(self) -> None:
+        """Chrome gọi khi mở màn hình / đổi kỳ → kéo khoảng ngày về kỳ và dựng lại.
+
+        Không có hàm này, báo cáo giữ nguyên kết quả tính từ lần mở app đầu tiên
+        dù sổ đã thay đổi."""
+        self._sync_dates_to_period()
+        self._refresh()
+
+    def _sync_dates_to_period(self) -> None:
+        """Đưa ô Từ/đến về đầu–cuối kỳ kế toán đang chọn.
+
+        Chặn tín hiệu để việc đồng bộ không kích thêm một lần dựng báo cáo —
+        hàm gọi sẽ tự dựng lại một lần sau đó."""
+        period = active_period()
+        for widget, value in (
+            (self._from, period.date_from), (self._to, period.date_to)
+        ):
+            blocked = widget.blockSignals(True)
+            widget.setDate(QDate(value.year, value.month, value.day))
+            widget.blockSignals(blocked)
 
     def _period(self) -> ReportPeriod:
         return ReportPeriod(start=_to_date(self._from.date()), end=_to_date(self._to.date()))

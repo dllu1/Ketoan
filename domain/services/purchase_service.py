@@ -1,9 +1,10 @@
 """Purchase documents (mua hàng): inventory IN + input-VAT / payable postings."""
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
-from domain.models.invoice import Invoice, InvoiceKind
+from domain.models.invoice import Invoice, InvoiceKind, InvoiceStatus
 from domain.models.journal import JournalLine
 from domain.models.partner import PartnerType
 from domain.services.document_service import (
@@ -14,6 +15,8 @@ from domain.services.document_service import (
 PurchaseValidationError = DocumentValidationError
 
 _VAT_INPUT_ACCOUNT = "1331"
+# Dòng chi phí không ghi TK Nợ → về chi phí sản xuất kinh doanh dở dang.
+_DEFAULT_COST_ACCOUNT = "154"
 
 
 class PurchaseService(DocumentService):
@@ -30,19 +33,28 @@ class PurchaseService(DocumentService):
         debit_by_account: dict[str, Decimal] = {}
         credit_by_account: dict[str, Decimal] = {}
         for line in invoice.lines:
-            if not line.item_code or line.quantity <= 0:
-                continue
-            stock_account = line.account_code or invoice.debit_account or "156"
-            self._inventory.record_in(
-                line.item_code, line.quantity, line.unit_price,
-                move_date=invoice.invoice_date, source_ref=invoice.ref,
-                note=invoice.description, account_code=stock_account,
-                item_name=line.item_name,
-            )
-            debit_account = (
-                line.debit_account or line.account_code
-                or invoice.debit_account or "156"
-            )
+            if line.is_cost:
+                # Chi phí dịch vụ mua ngoài (giao hàng, điện, nước…): không có
+                # hàng để nhập kho, chỉ ghi Nợ TK chi phí / Có phải trả. Nơi chi
+                # phí sẽ được phân bổ tới (line.allocation_target) chỉ lưu lại
+                # để kết chuyển sau, không sinh bút toán ở bước mua hàng.
+                if line.amount <= 0:
+                    continue
+                debit_account = line.debit_account or _DEFAULT_COST_ACCOUNT
+            else:
+                if not line.item_code or line.quantity <= 0:
+                    continue
+                stock_account = line.account_code or invoice.debit_account or "156"
+                self._inventory.record_in(
+                    line.item_code, line.quantity, line.unit_price,
+                    move_date=invoice.invoice_date, source_ref=invoice.ref,
+                    note=invoice.description, account_code=stock_account,
+                    item_name=line.item_name, unit=line.unit,
+                )
+                debit_account = (
+                    line.debit_account or line.account_code
+                    or invoice.debit_account or "156"
+                )
             credit_account = (
                 line.credit_account or invoice.credit_account or default_payable
             )
@@ -66,3 +78,29 @@ class PurchaseService(DocumentService):
                                     partner_code=invoice.partner_code))
 
         self._journal_entry(invoice, lines, desc=f"Mua hàng {invoice.ref}")
+
+    # ----- chi phí chờ phân bổ ---------------------------------------------
+
+    def cost_allocations(
+        self, date_from: date | None = None, date_to: date | None = None
+    ) -> dict[str, Decimal]:
+        """Tổng chi phí dịch vụ đã mua, gom theo *tài khoản sẽ phân bổ tới*.
+
+        Đây là đầu vào cho bước kết chuyển giá thành sau này: vd
+        ``{"155": 4_500_000, "632": 800_000}`` = 4,5tr chi phí chờ tính vào giá
+        thành thành phẩm và 800k vào giá vốn. Chỉ tính chứng từ đã ghi sổ.
+        """
+        totals: dict[str, Decimal] = {}
+        for invoice in self.list_all():
+            if invoice.status is not InvoiceStatus.POSTED:
+                continue
+            if date_from and invoice.invoice_date < date_from:
+                continue
+            if date_to and invoice.invoice_date > date_to:
+                continue
+            for line in invoice.cost_lines:
+                target = line.allocation_target
+                if not target or line.amount <= 0:
+                    continue
+                totals[target] = totals.get(target, Decimal("0")) + line.amount
+        return totals

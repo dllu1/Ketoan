@@ -162,7 +162,7 @@ def build_trial_balance(report: TrialBalance) -> ReportDocument:
         ],
         rows=[
             [
-                r.code, r.name,
+                r.code, "    " * r.level + r.name,
                 _money(r.opening_debit), _money(r.opening_credit),
                 _money(r.period_debit), _money(r.period_credit),
                 _money(r.closing_debit), _money(r.closing_credit),

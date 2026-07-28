@@ -7,9 +7,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QCompleter,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QSpinBox,
     QTableWidget,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
 from app.period import active_period
 from data.repositories.account_repo import AccountRepository
 from data.repositories.item_repo import ItemRepository
+from data.repositories.journal_repo import JournalRepository
 from data.repositories.partner_repo import PartnerRepository
 from domain.models.account import Account
 from domain.models.bom import BomLine
@@ -34,12 +37,67 @@ from domain.services.bom_service import BomService
 from domain.services.item_service import ItemService
 from domain.services.opening_service import OpeningBalanceService
 from domain.services.partner_service import PartnerService
+from domain.services.report_service import ReportService
 from ui.modals.account_modal import AccountModal
 from ui.modals.item_modal import ItemModal
 from ui.modals.partner_modal import PartnerModal
 from ui.primitives.button import Button, ButtonVariant
+from ui.primitives.enter_nav import EnterNavDelegate, install_grid_enter_nav
 from ui.primitives.icon_input import IconInput
 from ui.screens.material_sheet_view import _fmt_qty
+
+
+def _parse_decimal(text: str) -> Decimal | None:
+    """Đọc một số (đã nhóm nghìn) từ ô nhập; trả None nếu trống/không hợp lệ."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        return parse_money(text)
+    except ValueError:
+        return None
+
+
+def _fmt_ratio(value: Decimal) -> str:
+    """Định dạng định mức suy ra (1/N) tới 4 chữ số thập phân, bỏ số 0 thừa."""
+    if value == 0:
+        return "0"
+    return f"{value:,.4f}".rstrip("0").rstrip(".")
+
+
+class _MaterialCompleterDelegate(EnterNavDelegate):
+    """Ô "Mã NVL": gợi ý ``"mã — tên"`` theo NVL (152) đã khai; ô lưu mã trần.
+
+    Kế thừa :class:`EnterNavDelegate` để Enter vẫn nhảy sang ô kế tiếp. Danh
+    sách gợi ý lấy động (``entries_fn``) nên luôn phản ánh vật tư mới thêm.
+    """
+
+    def __init__(self, entries_fn, parent=None) -> None:
+        super().__init__(parent)
+        self._entries_fn = entries_fn  # () -> list[tuple[mã, "mã — tên"]]
+        self._code_by_label: dict[str, str] = {}
+
+    def createEditor(self, parent, option, index):  # noqa: N802 (Qt signature)
+        entries = self._entries_fn()
+        self._code_by_label = {label: code for code, label in entries}
+        editor = QLineEdit(parent)
+        completer = QCompleter([label for _, label in entries], editor)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchContains)
+        completer.setCompletionMode(QCompleter.PopupCompletion)
+        editor.setCompleter(completer)
+        return editor
+
+    def setEditorData(self, editor: QLineEdit, index):  # noqa: N802
+        editor.setText((index.data(Qt.EditRole) or "").strip())
+
+    def setModelData(self, editor: QLineEdit, model, index):  # noqa: N802
+        text = editor.text().strip()
+        # Chọn từ popup → nhãn đầy đủ "mã — tên"; gõ tay → tách token mã đầu.
+        code = self._code_by_label.get(text)
+        if code is None:
+            code = text.split(" — ")[0].split()[0] if text else ""
+        model.setData(index, code, Qt.EditRole)
 
 
 class DirectoryScreen(QWidget):
@@ -75,6 +133,18 @@ class DirectoryScreen(QWidget):
         self._reload_accounts()
         self._reload_opening()
         self._reload_bom_products()
+
+    def on_activated(self) -> None:
+        """Chrome gọi khi mở màn hình / đổi kỳ → nạp lại các danh mục từ DB.
+
+        Tab "Số dư đầu kỳ" là lưới sửa tay có nút Lưu riêng nên không nạp đè:
+        chỉ kéo ô năm về kỳ đang chọn, spinbox tự nạp lại khi năm thật sự đổi.
+        """
+        self._reload_partners()
+        self._reload_items()
+        self._reload_accounts()
+        self._reload_bom_products()
+        self._opening_year.setValue(active_period().year)
 
     # ----- Partners ----------------------------------------------------------
 
@@ -314,9 +384,10 @@ class DirectoryScreen(QWidget):
         toolbar.addWidget(btn_new)
         layout.addLayout(toolbar)
 
-        self._account_table = QTableWidget(0, 4)
+        self._account_table = QTableWidget(0, 6)
         self._account_table.setHorizontalHeaderLabels(
-            ["Mã", "Tên tài khoản", "Loại", "Nguồn (TT)"]
+            ["Mã", "Tên tài khoản", "Loại", "Thuộc TK tổng hợp",
+             "Số dư lũy kế", "Nguồn (TT)"]
         )
         self._configure_table(self._account_table)
         self._account_table.itemDoubleClicked.connect(lambda *_: self._on_account_edit())
@@ -327,20 +398,39 @@ class DirectoryScreen(QWidget):
     def _reload_accounts(self) -> None:
         query = self._account_search.text() if hasattr(self, "_account_search") else ""
         accounts = self._account_service.search(query)
+        # Số dư lũy kế đã cộng gộp con vào cha (tài khoản tổng hợp). Dựng lại
+        # ReportService mỗi lần làm mới để phản ánh bút toán mới nhất.
+        try:
+            balances = ReportService(JournalRepository()).aggregated_balances()
+        except Exception:
+            balances = {}
+        names = {a.code: a.name for a in self._account_service.list_all()}
         self._account_table.setRowCount(0)
         for account in accounts:
             row = self._account_table.rowCount()
             self._account_table.insertRow(row)
-            cells = [account.code, account.name, account.kind, account.circular]
+            parent_label = ""
+            if account.parent_code:
+                parent_name = names.get(account.parent_code, "")
+                parent_label = (f"{account.parent_code} — {parent_name}"
+                                if parent_name else account.parent_code)
+            net = balances.get(account.code)
+            balance_label = format_money(net) if net else ""
+            cells = [
+                account.code, account.name, account.kind, parent_label,
+                balance_label, account.circular,
+            ]
             for col, value in enumerate(cells):
                 table_item = QTableWidgetItem(value)
                 table_item.setFlags(table_item.flags() & ~Qt.ItemIsEditable)
+                if col == 4:
+                    table_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 if col == 0:
                     table_item.setData(Qt.UserRole, account.id)
                 self._account_table.setItem(row, col, table_item)
 
     def _on_account_new(self) -> None:
-        dialog = AccountModal(self)
+        dialog = AccountModal(self, accounts=self._account_service.list_all())
         if dialog.exec():
             try:
                 self._account_service.create(dialog.account())
@@ -353,7 +443,9 @@ class DirectoryScreen(QWidget):
         account = self._selected_account()
         if account is None:
             return
-        dialog = AccountModal(self, account=account)
+        dialog = AccountModal(
+            self, account=account, accounts=self._account_service.list_all()
+        )
         if dialog.exec():
             try:
                 self._account_service.update(dialog.account())
@@ -525,9 +617,19 @@ class DirectoryScreen(QWidget):
 
     # ----- Định mức (BOM) ----------------------------------------------------
 
-    _BOM_HEADERS = ["Mã NVL (152)", "Tên", "ĐVT", "Định mức / đơn vị", "Ghi chú"]
-    _BOM_MATERIAL, _BOM_NAME, _BOM_UNIT, _BOM_QTY, _BOM_NOTE = range(5)
-    _BOM_EDITABLE = (0, 3, 4)
+    _BOM_HEADERS = [
+        "Mã NVL (152)", "Tên", "ĐVT",
+        "Số TP / 1 ĐVT NVL", "Định mức / 1 TP", "Ghi chú",
+    ]
+    _BOM_MATERIAL, _BOM_NAME, _BOM_UNIT, _BOM_PACK, _BOM_QTY, _BOM_NOTE = range(6)
+    _BOM_EDITABLE = (0, 3, 4, 5)
+    _BOM_TOOLTIPS = {
+        3: "Quy cách đóng gói: 1 đơn vị NVL (vd 1 thùng carton) bao được bao "
+           "nhiêu thành phẩm. Nhập cho NVL đóng gói — vd 1 thùng chứa 25 cây → "
+           "gõ 25. Để trống nếu là NVL thường (nhập trực tiếp Định mức / 1 TP).",
+        4: "Lượng NVL dùng cho 1 thành phẩm (vd 0,8 kg thép/1 cây). Nếu đã nhập "
+           "'Số TP / 1 ĐVT NVL' thì ô này tự tính = 1 / số đó.",
+    }
 
     def _build_bom_tab(self) -> QWidget:
         widget = QWidget()
@@ -543,20 +645,32 @@ class DirectoryScreen(QWidget):
         toolbar.addWidget(self._bom_product)
         toolbar.addStretch(1)
 
+        btn_import = Button("Lấy NVL từ kho", icon_name="download")
+        btn_import.setToolTip(
+            "Đưa các NVL đã khai ở Kho hàng (Nhập–Xuất–Tồn) vào Danh mục vật tư, "
+            "để khỏi phải nhập tay lại. Mã đã có trong danh mục được giữ nguyên."
+        )
+        btn_import.clicked.connect(self._on_import_materials_from_stock)
         btn_add = Button("Thêm dòng", icon_name="plus")
         btn_add.clicked.connect(lambda: self._add_bom_row())
         btn_del = Button("Xóa dòng", variant=ButtonVariant.DANGER, icon_name="trash")
         btn_del.clicked.connect(self._remove_bom_row)
         btn_save = Button("Lưu", variant=ButtonVariant.PRIMARY, icon_name="check")
         btn_save.clicked.connect(self._on_bom_save)
+        toolbar.addWidget(btn_import)
         toolbar.addWidget(btn_add)
         toolbar.addWidget(btn_del)
         toolbar.addWidget(btn_save)
         layout.addLayout(toolbar)
 
         hint = QLabel(
-            "Khai định mức nguyên vật liệu (kho 152) cho từng thành phẩm. "
-            "Bảng tính giá thành dùng định mức × số lượng × đơn giá NVL để tính tiền NVL."
+            "Khai định mức NVL (kho 152) cho 1 thành phẩm — có 2 cách nhập mỗi dòng:\n"
+            "•  NVL thường (thép, sơn…): nhập trực tiếp cột “Định mức / 1 TP” = "
+            "lượng NVL dùng cho 1 thành phẩm (vd 0,8 kg thép / 1 cây).\n"
+            "•  NVL đóng gói (thùng carton…): chỉ cần nhập cột “Số TP / 1 ĐVT NVL” = "
+            "1 thùng chứa được bao nhiêu cây (vd 25) — định mức tự tính = 1/25.\n"
+            "Giá thành = định mức × số lượng sản xuất × đơn giá NVL. NVL phải có "
+            "trong Danh mục — dùng “Lấy NVL từ kho” nếu đã khai ở Kho hàng."
         )
         hint.setObjectName("SectionLabel")
         hint.setWordWrap(True)
@@ -565,13 +679,32 @@ class DirectoryScreen(QWidget):
         self._bom_updating = False
         self._bom_table = QTableWidget(0, len(self._BOM_HEADERS))
         self._bom_table.setHorizontalHeaderLabels(self._BOM_HEADERS)
+        for col, tip in self._BOM_TOOLTIPS.items():
+            header_item = self._bom_table.horizontalHeaderItem(col)
+            if header_item is not None:
+                header_item.setToolTip(tip)
         self._configure_table(self._bom_table)
         self._bom_table.horizontalHeader().setSectionResizeMode(
             self._BOM_NAME, QHeaderView.Stretch
         )
         self._bom_table.itemChanged.connect(self._on_bom_item_changed)
+        # Ô "Mã NVL" gợi ý theo NVL (152) đã khai để mã luôn khớp danh mục →
+        # tên/ĐVT tự điền được. Enter nhảy Mã NVL → Định mức → Ghi chú → dòng mới,
+        # bỏ qua cột chỉ đọc (Tên, ĐVT) đúng như các bảng nhập khác trong app.
+        self._bom_table.setItemDelegateForColumn(
+            self._BOM_MATERIAL,
+            _MaterialCompleterDelegate(self._material_entries, self._bom_table),
+        )
+        install_grid_enter_nav(self._bom_table, add_row=self._add_bom_row)
         layout.addWidget(self._bom_table, 1)
         return widget
+
+    def _material_entries(self) -> list[tuple[str, str]]:
+        """(mã, "mã — tên") của NVL (152) cho gợi ý ô Mã NVL của định mức."""
+        return [
+            (i.code, f"{i.code} — {i.name}")
+            for i in self._item_service.list_all(ItemCategory.MATERIAL)
+        ]
 
     def _reload_bom_products(self) -> None:
         # Remember the current selection so adding/editing another item doesn't
@@ -594,6 +727,47 @@ class DirectoryScreen(QWidget):
     def _current_product_code(self) -> str:
         return self._bom_product.currentData() or ""
 
+    def _on_import_materials_from_stock(self) -> None:
+        """Đồng bộ NVL từ Kho hàng vào Danh mục vật tư (152).
+
+        Gộp hai nguồn kho: sổ NXT sinh từ chứng từ (tab Nhập–Xuất–Tồn) là chính,
+        rồi bổ sung mã chỉ có ở Bảng kê NVL chính (nhập tay). Nhờ vậy mọi NVL đang
+        thấy ở Kho hàng đều lấy được, không phải nhập tay lại.
+        """
+        from data.repositories.inventory_repo import InventoryRepository
+        from data.repositories.material_sheet_repo import MaterialSheetRepository
+        from domain.services.inventory_service import InventoryService
+
+        merged: dict[str, tuple[str, str]] = {}
+        inventory = InventoryService(InventoryRepository(), ItemRepository())
+        for code, name, unit in inventory.list_stock_materials("152"):
+            merged[code] = (name, unit)
+        for code, name, unit in MaterialSheetRepository().list_distinct_materials():
+            merged.setdefault(code, (name, unit))
+        materials = [(code, name, unit) for code, (name, unit) in sorted(merged.items())]
+        if not materials:
+            QMessageBox.information(
+                self, "Chưa có NVL trong kho",
+                "Sổ kho (Kho hàng → Nhập–Xuất–Tồn) chưa có nguyên vật liệu nào "
+                "để lấy sang danh mục.",
+            )
+            return
+        created = self._item_service.import_materials(materials)
+        # Danh mục vừa đổi → làm mới bảng vật tư và gợi ý ô Mã NVL của định mức.
+        self._reload_items()
+        self._reload_bom_products()
+        if created:
+            QMessageBox.information(
+                self, "Đã lấy NVL từ kho",
+                f"Đã thêm {created} nguyên vật liệu mới vào danh mục. "
+                "Giờ có thể chọn chúng khi khai định mức.",
+            )
+        else:
+            QMessageBox.information(
+                self, "Không có NVL mới",
+                "Mọi nguyên vật liệu trong kho đều đã có trong danh mục.",
+            )
+
     def _reload_bom_lines(self) -> None:
         self._bom_updating = True
         self._bom_table.setRowCount(0)
@@ -615,15 +789,20 @@ class DirectoryScreen(QWidget):
             values[self._BOM_MATERIAL] = line.material_code
             values[self._BOM_NAME] = line.material_name
             values[self._BOM_UNIT] = line.unit
+            values[self._BOM_PACK] = (
+                _fmt_qty(line.pieces_per_pack) if line.pieces_per_pack else ""
+            )
             values[self._BOM_QTY] = _fmt_qty(line.quantity_per) if line.quantity_per else ""
             values[self._BOM_NOTE] = line.note
         for col, value in enumerate(values):
             cell = QTableWidgetItem(value)
-            if col == self._BOM_QTY:
+            if col in (self._BOM_PACK, self._BOM_QTY):
                 cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             if col not in self._BOM_EDITABLE:
                 cell.setFlags(cell.flags() & ~Qt.ItemIsEditable)
             self._bom_table.setItem(row, col, cell)
+        # NVL đóng gói: khoá ô định mức và để nó tự tính từ số TP / thùng.
+        self._sync_bom_packaging(row)
         self._bom_updating = was
 
     def _remove_bom_row(self) -> None:
@@ -632,14 +811,39 @@ class DirectoryScreen(QWidget):
             self._bom_table.removeRow(row)
 
     def _on_bom_item_changed(self, cell: QTableWidgetItem) -> None:
-        if self._bom_updating or cell.column() != self._BOM_MATERIAL:
+        if self._bom_updating:
             return
-        self._bom_updating = True
-        row = cell.row()
-        item = self._item_lookup().get(cell.text().strip())
-        self._bom_table.item(row, self._BOM_NAME).setText(item.name if item else "")
-        self._bom_table.item(row, self._BOM_UNIT).setText(item.unit if item else "")
-        self._bom_updating = False
+        col = cell.column()
+        if col == self._BOM_MATERIAL:
+            self._bom_updating = True
+            row = cell.row()
+            item = self._item_lookup().get(cell.text().strip())
+            self._bom_table.item(row, self._BOM_NAME).setText(item.name if item else "")
+            self._bom_table.item(row, self._BOM_UNIT).setText(item.unit if item else "")
+            self._bom_updating = False
+        elif col == self._BOM_PACK:
+            self._bom_updating = True
+            self._sync_bom_packaging(cell.row())
+            self._bom_updating = False
+
+    def _sync_bom_packaging(self, row: int) -> None:
+        """Khi khai 'Số TP / 1 ĐVT NVL', tự tính định mức = 1/N và khoá ô đó.
+
+        Bỏ trống ô đóng gói thì trả ô 'Định mức / 1 TP' về nhập tay được.
+        """
+        pack_cell = self._bom_table.item(row, self._BOM_PACK)
+        qty_cell = self._bom_table.item(row, self._BOM_QTY)
+        if pack_cell is None or qty_cell is None:
+            return
+        pieces = _parse_decimal(pack_cell.text())
+        if pieces and pieces > 0:
+            derived = Decimal(1) / pieces
+            qty_cell.setText(_fmt_ratio(derived))
+            qty_cell.setFlags(qty_cell.flags() & ~Qt.ItemIsEditable)
+            qty_cell.setToolTip(f"Tự tính = 1 / {pack_cell.text().strip()} (đóng gói)")
+        else:
+            qty_cell.setFlags(qty_cell.flags() | Qt.ItemIsEditable)
+            qty_cell.setToolTip("")
 
     def _on_bom_save(self) -> None:
         code = self._current_product_code()
@@ -650,6 +854,7 @@ class DirectoryScreen(QWidget):
         lines: list[BomLine] = []
         for r in range(self._bom_table.rowCount()):
             material = self._bom_table.item(r, self._BOM_MATERIAL)
+            pack_cell = self._bom_table.item(r, self._BOM_PACK)
             qty_cell = self._bom_table.item(r, self._BOM_QTY)
             note_cell = self._bom_table.item(r, self._BOM_NOTE)
             material_code = material.text().strip() if material else ""
@@ -657,11 +862,15 @@ class DirectoryScreen(QWidget):
                 qty = parse_money(qty_cell.text()) if qty_cell else Decimal("0")
             except ValueError:
                 qty = Decimal("0")
+            pieces = _parse_decimal(pack_cell.text()) if pack_cell else None
             line = BomLine(
                 product_code=code, material_code=material_code,
                 quantity_per=qty, note=note_cell.text().strip() if note_cell else "",
+                pieces_per_pack=pieces or Decimal("0"),
             )
-            if not line.is_empty:
+            # apply_packaging (trong BomService.save) sẽ suy ra quantity_per=1/N
+            # cho dòng đóng gói; ở đây chỉ cần không loại nhầm dòng đó là rỗng.
+            if not line.is_empty or (material_code and pieces):
                 lines.append(line)
         self._bom_service.save(code, lines)
         QMessageBox.information(self, "Đã lưu", f"Đã lưu định mức cho {code}.")

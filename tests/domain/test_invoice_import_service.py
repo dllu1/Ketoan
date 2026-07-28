@@ -74,6 +74,52 @@ def _parsed(*, seller_tax, buyer_tax, serial="1C22TAA", no="55"):
     return ParsedEmailInvoice(parsed=parsed, uid=10)
 
 
+def _parsed_with_lines(lines, *, no="90"):
+    """Như _parsed nhưng cho phép chỉ định danh sách dòng hàng."""
+    from domain.services.einvoice_parser import ParsedInvoice
+    from domain.services.invoice_import_service import ParsedEmailInvoice
+
+    parsed = ParsedInvoice(
+        invoice_no=no, serial="1C22TAA", invoice_date=date(2026, 6, 18),
+        seller_name="CONG TY BAN", seller_tax_code="0301234567",
+        buyer_name="CONG TY MUA", buyer_tax_code=_COMPANY_TAX,
+        lines=lines,
+    )
+    return ParsedEmailInvoice(parsed=parsed, uid=11)
+
+
+def test_empty_line_is_dropped_but_invoice_still_imports(in_memory_db):
+    from domain.services.einvoice_parser import ParsedLine
+
+    importer, invoices, _ = _importer(in_memory_db)
+    # Hóa đơn thật hay có dòng bỏ trống (0/0) xen giữa các dòng có hàng.
+    result = importer.persist([_parsed_with_lines([
+        ParsedLine(name="Thep tam", unit="kg", quantity=Decimal("10"),
+                   unit_price=Decimal("1000"), amount=Decimal("10000")),
+        ParsedLine(name="Dong trong", unit="cay", quantity=Decimal("0"),
+                   unit_price=Decimal("0"), amount=Decimal("0")),
+    ])])
+    assert result.imported == 1
+    saved = invoices.find_by_ref("1C22TAA-90")
+    assert saved is not None
+    assert len(saved.lines) == 1          # dòng rỗng đã bị loại
+    assert saved.lines[0].item_name == "Thep tam"
+
+
+def test_invoice_with_only_empty_lines_is_reported_not_crashed(in_memory_db):
+    from domain.services.einvoice_parser import ParsedLine
+
+    importer, invoices, _ = _importer(in_memory_db)
+    result = importer.persist([_parsed_with_lines([
+        ParsedLine(name="Ty 22x285", unit="cay", quantity=Decimal("0"),
+                   unit_price=Decimal("0"), amount=Decimal("0")),
+    ], no="114")])
+    assert result.imported == 0
+    assert invoices.find_by_ref("1C22TAA-114") is None
+    assert len(result.errors) == 1
+    assert "không có dòng hàng" in result.errors[0]
+
+
 def test_classify_purchase_when_company_is_buyer(in_memory_db):
     from domain.models.invoice import InvoiceKind
 

@@ -207,10 +207,23 @@ class DocumentService:
     def _validate(invoice: Invoice) -> None:
         if not invoice.ref.strip():
             raise DocumentValidationError("Số chứng từ là bắt buộc.")
-        real_lines = [
-            ln for ln in invoice.lines if ln.item_code.strip() or ln.quantity > 0
+        # Dòng chi phí dịch vụ (giao hàng, điện, nước…) không có mặt hàng / số
+        # lượng — chỉ cần nội dung và thành tiền, nên kiểm tra theo luật riêng.
+        cost_lines = [
+            ln for ln in invoice.cost_lines
+            if ln.item_name.strip() or ln.amount > 0
         ]
-        if not real_lines:
+        for line in cost_lines:
+            if not line.item_name.strip():
+                raise DocumentValidationError("Mỗi dòng chi phí phải có nội dung.")
+            if line.amount <= 0:
+                raise DocumentValidationError(
+                    f"Thành tiền của chi phí '{line.item_name}' phải lớn hơn 0."
+                )
+        real_lines = [
+            ln for ln in invoice.item_lines if ln.item_code.strip() or ln.quantity > 0
+        ]
+        if not real_lines and not cost_lines:
             raise DocumentValidationError("Chứng từ phải có ít nhất một dòng hàng.")
         for line in real_lines:
             if not line.item_code.strip():

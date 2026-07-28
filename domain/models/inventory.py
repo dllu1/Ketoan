@@ -40,6 +40,7 @@ class InventoryMovement:
     unit_cost: Decimal = field(default_factory=lambda: Decimal("0"))
     account_code: str = ""        # 152/153/155/156
     item_name: str = ""
+    unit: str = ""                # ĐVT ghi trên chứng từ (kg, m, cái…)
     source_ref: str = ""          # chứng từ gốc (vd: số hóa đơn bán hàng)
     note: str = ""
     id: int | None = None

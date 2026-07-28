@@ -128,7 +128,13 @@ def parse_einvoice(xml_bytes: bytes) -> ParsedInvoice:
     common = _find(root, "TTChung")
     content = _find(root, "NDHDon")
     if common is None and content is None:
-        raise EInvoiceParseError("Không phải hóa đơn điện tử (thiếu TTChung/NDHDon).")
+        # Chuẩn cũ của TCT (invoicexml/v1, mẫu 01GTKT thời TT32/TT39) dùng bộ thẻ
+        # tiếng Anh hoàn toàn khác — vẫn là HĐĐT hợp lệ, chỉ khác lược đồ.
+        if _find(root, "invoiceData") is not None or _text(root, "invoiceNumber"):
+            return _parse_gdt_2014(root)
+        raise EInvoiceParseError(
+            "Không phải hóa đơn điện tử (thiếu TTChung/NDHDon và invoiceData)."
+        )
 
     model_no = _text(common, "KHMSHDon")   # mẫu số, vd "1"
     symbol = _text(common, "KHHDon")        # ký hiệu, vd "C22TAA"
@@ -166,6 +172,59 @@ def parse_einvoice(xml_bytes: bytes) -> ParsedInvoice:
                 quantity=quantity,
                 unit_price=unit_price,
                 vat_rate=_vat_rate(_text(item, "TSuat")),
+                amount=amount,
+            )
+        )
+
+    return parsed
+
+
+def _parse_gdt_2014(root: ET.Element) -> ParsedInvoice:
+    """Chuẩn cũ ``laphoadon.gdt.gov.vn/2014/09/invoicexml/v1`` (mẫu 01GTKT).
+
+    Hóa đơn phát hành trước TT78 (và các hóa đơn cũ còn lưu trong hộp thư) dùng
+    lược đồ này: thẻ tiếng Anh phẳng trong ``invoiceData``, hàng hóa nằm ở
+    ``items/item``. Ký hiệu kế toán hay ghi chính là ``invoiceSeries`` (vd
+    ``HP/19E``), còn ``templateCode`` là mẫu số.
+    """
+    # Không dùng "or": Element rỗng có truth value False → sẽ rơi nhầm về root.
+    data = _find(root, "invoiceData")
+    if data is None:
+        data = root
+
+    parsed = ParsedInvoice(
+        invoice_no=_text(data, "invoiceNumber"),
+        serial=_text(data, "invoiceSeries") or _text(data, "templateCode"),
+        # Ngày dạng "2026-01-15T00:00:00" — _parse_date tự cắt 10 ký tự đầu.
+        invoice_date=_parse_date(
+            _text(data, "invoiceIssuedDate") or _text(data, "signedDate")
+        ),
+        seller_name=_text(data, "sellerLegalName"),
+        seller_tax_code=_text(data, "sellerTaxCode"),
+        seller_address=_text(data, "sellerAddressLine"),
+        buyer_name=_text(data, "buyerLegalName") or _text(data, "buyerDisplayName"),
+        buyer_tax_code=_text(data, "buyerTaxCode"),
+        buyer_address=_text(data, "buyerAddressLine"),
+        currency=_text(data, "currencyCode") or "VND",
+    )
+
+    for item in _find_all(_find(data, "items"), "item"):
+        name = _text(item, "itemName")
+        if not name:
+            continue
+        quantity = _decimal(_text(item, "quantity"))
+        unit_price = _decimal(_text(item, "unitPrice"))
+        # Thành tiền ở chuẩn này là số tiền TRƯỚC thuế, đúng nghĩa với ThTien.
+        amount = _decimal(_text(item, "itemTotalAmountWithoutVat"))
+        if unit_price == 0 and quantity > 0 and amount > 0:
+            unit_price = amount / quantity
+        parsed.lines.append(
+            ParsedLine(
+                name=name,
+                unit=_text(item, "unitName"),
+                quantity=quantity,
+                unit_price=unit_price,
+                vat_rate=_vat_rate(_text(item, "vatPercentage")),
                 amount=amount,
             )
         )

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.period import active_period
 from data.repositories.account_repo import AccountRepository
 from data.repositories.journal_repo import JournalRepository
 from domain.models.cash import CASH_ACCOUNTS, CashKind
@@ -85,9 +86,19 @@ class CashScreen(QWidget):
 
     # ----- data ---------------------------------------------------------
 
+    def on_activated(self) -> None:
+        """Chrome gọi khi mở màn hình / đổi kỳ → nạp lại sổ quỹ từ sổ nhật ký."""
+        self._reload()
+
     def _reload(self) -> None:
         account_filter = self._account.currentData()
-        movements = self._service.list_movements(account_filter)
+        period = active_period()
+        # Cột "Tồn" là số dư lũy kế do CashService tính trên toàn bộ lịch sử nên
+        # vẫn đúng khi chỉ hiển thị các dòng thuộc kỳ đang chọn.
+        movements = [
+            mv for mv in self._service.list_movements(account_filter)
+            if period.matches(mv.entry_date)
+        ]
         self._table.setRowCount(0)
         for mv in movements:
             row = self._table.rowCount()
@@ -115,7 +126,11 @@ class CashScreen(QWidget):
             f"{code}: {format_money(self._service.balance(code))}"
             for code in CASH_ACCOUNTS
         ]
-        self._summary.setText("Số dư   " + "      ".join(parts))
+        # Nói rõ đang xem kỳ nào: bảng chỉ liệt kê phát sinh trong kỳ, còn số dư
+        # là lũy kế đến hiện tại.
+        self._summary.setText(
+            f"{period.label}   ·   Số dư lũy kế   " + "      ".join(parts)
+        )
 
     # ----- actions ------------------------------------------------------
 
@@ -139,6 +154,16 @@ class CashScreen(QWidget):
             QMessageBox.warning(self, "Không thể lưu", str(exc))
             return
         self._reload()
+        # Phiếu ngoài kỳ đang xem đã lưu nhưng không hiện trong bảng — nói rõ
+        # kẻo người dùng tưởng bấm hụt.
+        period = active_period()
+        if not period.matches(dialog.entry_date()):
+            QMessageBox.information(
+                self, "Đã lưu ngoài kỳ đang xem",
+                f"Phiếu '{dialog.ref()}' ghi ngày "
+                f"{dialog.entry_date().strftime('%d/%m/%Y')} nên không hiện ở "
+                f"kỳ {period.label}. Đổi kỳ kế toán trên thanh trên để xem.",
+            )
 
     def _on_delete(self) -> None:
         row = self._table.currentRow()

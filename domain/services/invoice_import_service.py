@@ -12,6 +12,7 @@ người bán); không khớp → mặc định PURCHASE (hóa đơn đầu vào
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from app.config import USER_DATA_DIR
@@ -112,9 +113,19 @@ class InvoiceImportService:
 
     # ----- pha 1: mạng (chạy được trong thread) ----------------------------
 
-    def fetch_parsed(self, config: EmailConfig) -> tuple[list[ParsedEmailInvoice], int]:
-        """IMAP lấy thư mới + phân tích XML. Trả về (danh sách, UID cao nhất)."""
-        messages = imap_client.fetch_invoice_messages(config, config.last_uid)
+    def fetch_parsed(
+        self,
+        config: EmailConfig,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> tuple[list[ParsedEmailInvoice], int]:
+        """IMAP lấy thư mới + phân tích XML. Trả về (danh sách, UID cao nhất).
+
+        ``progress(done, total)`` (nếu có) được gọi từ chính luồng đang chạy hàm
+        này — UI phải chuyển tiếp qua signal để cập nhật trên main thread.
+        """
+        messages = imap_client.fetch_invoice_messages(
+            config, config.last_uid, progress=progress
+        )
         items: list[ParsedEmailInvoice] = []
         max_uid = config.last_uid
         for msg in messages:
@@ -146,6 +157,13 @@ class InvoiceImportService:
             invoice, service = self._build_invoice(item, company_tax, name_to_item)
             if self._invoices.find_by_ref(invoice.ref) is not None:
                 result.skipped += 1
+                continue
+            if not invoice.lines:
+                # Mọi dòng đều rỗng → hóa đơn không có nội dung để ghi sổ.
+                result.errors.append(
+                    f"{invoice.ref}: hóa đơn không có dòng hàng nào có số lượng "
+                    "hoặc thành tiền — bỏ qua."
+                )
                 continue
             self._save_pdf(item, invoice)
             try:
@@ -216,9 +234,13 @@ class InvoiceImportService:
             partner_address=paddr,
             description=f"HĐĐT {p.serial} số {p.invoice_no}".strip(),
             source="EMAIL",
+            # Hóa đơn thật thỉnh thoảng có dòng rỗng (số lượng = 0, thành tiền =
+            # 0) — dòng ghi chú/bỏ trống của người lập. Bỏ đi, nếu không cả hóa
+            # đơn bị từ chối vì "số lượng phải lớn hơn 0".
             lines=[
                 self._build_line(line, name_to_item, default_stock)
                 for line in p.lines
+                if line.quantity > 0 or line.amount > 0
             ],
         )
         return invoice, service

@@ -42,6 +42,22 @@ class MaterialSheetRepository:
         ).fetchall()
         return [_row_to_line(r) for r in rows]
 
+    def list_distinct_materials(self) -> list[tuple[str, str, str]]:
+        """(mã, tên, ĐVT) duy nhất theo mã trên mọi kỳ của sổ kho NVL.
+
+        Dùng để đồng bộ NVL đã khai trong kho hàng sang Danh mục vật tư. Khi một
+        mã xuất hiện ở nhiều kỳ với tên/ĐVT khác nhau, bản của **kỳ mới nhất**
+        được giữ (ORDER BY period_key tăng dần → ghi đè dần trong dict).
+        """
+        rows = self._conn.execute(
+            "SELECT code, name, unit FROM material_sheet_line "
+            "WHERE TRIM(code) <> '' ORDER BY period_key, line_no, id"
+        ).fetchall()
+        latest: dict[str, tuple[str, str]] = {}
+        for r in rows:
+            latest[r["code"].strip()] = (r["name"], r["unit"])
+        return [(code, name, unit) for code, (name, unit) in sorted(latest.items())]
+
     def replace(self, period_key: str, lines: list[MaterialLine]) -> None:
         with self._conn:
             self._conn.execute(

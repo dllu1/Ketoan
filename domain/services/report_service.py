@@ -14,6 +14,7 @@ from data.repositories.account_repo import AccountRepository
 from data.repositories.journal_repo import JournalRepository
 from data.repositories.partner_repo import PartnerRepository
 from domain.models.account import Account, AccountKind
+from domain.services import account_hierarchy
 from domain.services.opening_service import OpeningBalanceService
 from domain.models.journal import EntryStatus, JournalEntry, JournalLine
 from domain.models.report import (
@@ -151,12 +152,26 @@ class ReportService:
     def trial_balance(self, period: ReportPeriod) -> TrialBalance:
         opening = self._net_balances(before=period.start)
         movements = self._movements(period.start, period.end)
+        parents = self._parents()
+        children = account_hierarchy.children_map(parents)
 
-        codes = sorted(set(opening) | set(movements))
+        # Cộng gộp số dư con vào cha: mỗi cột (dư đầu net, PS Nợ, PS Có) gộp
+        # riêng để dòng cha phản ánh đúng tổng các con + số phát sinh riêng của
+        # nó. Không có tài khoản tổng hợp nào thì các map giữ nguyên như cũ.
+        agg_open = account_hierarchy.aggregate(opening, parents)
+        agg_debit = account_hierarchy.aggregate(
+            {c: d for c, (d, _c) in movements.items()}, parents
+        )
+        agg_credit = account_hierarchy.aggregate(
+            {c: cr for c, (_d, cr) in movements.items()}, parents
+        )
+
+        codes = sorted(set(agg_open) | set(agg_debit) | set(agg_credit))
         report = TrialBalance(period=period)
         for code in codes:
-            open_net = opening.get(code, _ZERO)
-            debit, credit = movements.get(code, (_ZERO, _ZERO))
+            open_net = agg_open.get(code, _ZERO)
+            debit = agg_debit.get(code, _ZERO)
+            credit = agg_credit.get(code, _ZERO)
             close_net = open_net + debit - credit
             if open_net == _ZERO and debit == _ZERO and credit == _ZERO:
                 continue
@@ -170,6 +185,9 @@ class ReportService:
                     period_credit=credit,
                     closing_debit=close_net if close_net > 0 else _ZERO,
                     closing_credit=-close_net if close_net < 0 else _ZERO,
+                    parent_code=parents.get(code, ""),
+                    level=account_hierarchy.depth(code, parents),
+                    is_aggregate=code in children,
                 )
             )
         return report
@@ -197,9 +215,16 @@ class ReportService:
     def balance_sheet(self, as_of: date) -> BalanceSheet:
         # Inclusive of as_of: balances accumulate up to and including that day.
         balances = self._net_balances(before=_day_after(as_of))
+        parents = self._parents()
+        # Gộp số dư con vào cha rồi chỉ hiển thị tài khoản gốc (không có cha):
+        # con đã nằm trong số của cha nên đưa riêng sẽ cộng trùng tổng tài sản /
+        # nguồn vốn. Không khai báo tổng hợp thì mọi mã đều là gốc → như cũ.
+        balances = account_hierarchy.aggregate(balances, parents)
         sheet = BalanceSheet(as_of=as_of)
         result = _ZERO
         for code in sorted(balances):
+            if parents.get(code):
+                continue
             net = balances[code]
             if net == _ZERO:
                 continue
@@ -220,6 +245,18 @@ class ReportService:
                 result += -net                    # net debit subtracts from profit
         sheet.result_profit = result
         return sheet
+
+    def aggregated_balances(self, as_of: date | None = None) -> dict[str, Decimal]:
+        """Số dư net theo mã, đã cộng gộp con vào cha (tài khoản tổng hợp).
+
+        Dùng cho màn Danh mục tài khoản để hiển thị cột "Số dư lũy kế": tài
+        khoản cha hiện tổng của chính nó và các con. ``as_of=None`` lấy toàn bộ
+        lịch sử tới hiện tại.
+        """
+        before = _day_after(as_of) if as_of else date.max
+        return account_hierarchy.aggregate(
+            self._net_balances(before=before), self._parents()
+        )
 
     def debt_summary(
         self,
@@ -376,6 +413,16 @@ class ReportService:
         if cached is None:
             cached = {a.code: a for a in self._accounts.list_all()}
             self._acc_cache = cached
+        return cached
+
+    def _parents(self) -> dict[str, str]:
+        """Map ``{code: parent_code}`` tài khoản tổng hợp, đã chuẩn hoá + cache."""
+        cached = getattr(self, "_parents_cache", None)
+        if cached is None:
+            accounts = self._account_map()
+            raw = {c: a.parent_code for c, a in accounts.items() if a.parent_code}
+            cached = account_hierarchy.normalize_parents(raw, accounts.keys())
+            self._parents_cache = cached
         return cached
 
     def _name_for(self, code: str, fallback: str = "") -> str:
