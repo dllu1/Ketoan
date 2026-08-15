@@ -213,6 +213,40 @@ def test_income_statement_profit(seeded):
     assert pl.profit_before_tax == 35 * _M
 
 
+def test_income_statement_survives_year_end_closing(seeded):
+    """Kết chuyển 911 không được làm rỗng KQKD (và kéo theo tờ khai TNDN).
+
+    Sau KC-DT/KC-CP thì 511 vừa có Có vừa có Nợ nên số phát sinh thuần = 0 —
+    báo cáo phải bỏ qua chính các bút toán kết chuyển, không phải trả về trắng.
+    """
+    journal = _journal(seeded)
+    journal.create(_entry("KC-DT/Q1", date(2026, 3, 31),
+                          [("511", 100 * _M, _Z), ("911", _Z, 100 * _M)]))
+    journal.create(_entry("KC-CP/Q1", date(2026, 3, 31),
+                          [("911", 65 * _M, _Z),
+                           ("632", _Z, 60 * _M), ("642", _Z, 5 * _M)]))
+    journal.create(_entry("KC-LN/Q1", date(2026, 3, 31),
+                          [("911", 35 * _M, _Z), ("4212", _Z, 35 * _M)]))
+
+    pl = _report(seeded).income_statement(_PERIOD)
+    assert pl.total_revenue == 100 * _M
+    assert pl.total_expense == 65 * _M
+    assert pl.profit_before_tax == 35 * _M
+
+
+def test_income_statement_keeps_cogs_transfer_kc_gv(in_memory_db):
+    """KC-GV (Nợ 632 / Có 155) là chi phí thật — không nằm trong nhóm bị loại."""
+    journal = _journal(in_memory_db)
+    journal.create(_entry("BH01", date(2026, 1, 15),
+                          [("131", 100 * _M, _Z), ("511", _Z, 100 * _M)]))
+    journal.create(_entry("KC-GV/Q1", date(2026, 3, 31),
+                          [("632", 60 * _M, _Z), ("155", _Z, 60 * _M)]))
+
+    pl = _report(in_memory_db).income_statement(_PERIOD)
+    assert pl.total_expense == 60 * _M
+    assert pl.profit_before_tax == 40 * _M
+
+
 def test_balance_sheet_balances_with_period_result(seeded):
     bs = _report(seeded).balance_sheet(date(2026, 3, 31))
     assert bs.total_assets == 235 * _M
@@ -226,6 +260,150 @@ def test_cash_flow_direct_movements(seeded):
     assert cf.total_inflow == 100 * _M
     assert cf.total_outflow == 5 * _M
     assert cf.closing_balance == 295 * _M
+
+
+def test_income_statement_b02_maps_indicators(seeded):
+    """Mẫu B02-DNN: doanh thu [01], giá vốn [11], chi phí QLKD [24] và các dòng cộng."""
+    kq = _report(seeded).income_statement_b02(_PERIOD)
+    assert kq.amount("01") == 100 * _M          # Có 511
+    assert kq.amount("02") == _Z
+    assert kq.amount("10") == 100 * _M          # doanh thu thuần
+    assert kq.amount("11") == 60 * _M           # Nợ 632
+    assert kq.amount("20") == 40 * _M           # lợi nhuận gộp
+    assert kq.amount("24") == 5 * _M            # Nợ 642
+    assert kq.amount("30") == 35 * _M
+    assert kq.amount("50") == 35 * _M
+    assert kq.amount("60") == 35 * _M           # chưa hạch toán 821
+
+
+def test_income_statement_b02_full_form(in_memory_db):
+    journal = _journal(in_memory_db)
+    journal.create(_entry("BH", date(2026, 1, 10),
+                          [("131", 200 * _M, _Z), ("511", _Z, 200 * _M)]))
+    # Hàng bán bị trả lại — TT133 ghi thẳng vào bên Nợ 511 → [02].
+    journal.create(_entry("TL", date(2026, 1, 20),
+                          [("511", 20 * _M, _Z), ("131", _Z, 20 * _M)]))
+    journal.create(_entry("GV", date(2026, 1, 31),
+                          [("632", 120 * _M, _Z), ("156", _Z, 120 * _M)]))
+    journal.create(_entry("DTTC", date(2026, 2, 5),
+                          [("112", 3 * _M, _Z), ("515", _Z, 3 * _M)]))
+    journal.create(_entry("LAIVAY", date(2026, 2, 10),
+                          [("6351", 8 * _M, _Z), ("112", _Z, 8 * _M)]))
+    journal.create(_entry("QLDN", date(2026, 2, 28),
+                          [("642", 15 * _M, _Z), ("111", _Z, 15 * _M)]))
+    journal.create(_entry("TNK", date(2026, 3, 1),
+                          [("111", 2 * _M, _Z), ("711", _Z, 2 * _M)]))
+    journal.create(_entry("CPK", date(2026, 3, 2),
+                          [("811", 6 * _M, _Z), ("111", _Z, 6 * _M)]))
+    journal.create(_entry("TNDN", date(2026, 3, 31),
+                          [("821", 4 * _M, _Z), ("3334", _Z, 4 * _M)]))
+
+    kq = _report(in_memory_db).income_statement_b02(_PERIOD)
+    assert kq.amount("01") == 200 * _M
+    assert kq.amount("02") == 20 * _M
+    assert kq.amount("10") == 180 * _M
+    assert kq.amount("11") == 120 * _M
+    assert kq.amount("20") == 60 * _M
+    assert kq.amount("21") == 3 * _M
+    assert kq.amount("22") == 8 * _M            # 6351 nằm trong chi phí tài chính
+    assert kq.amount("23") == 8 * _M            # "trong đó: chi phí lãi vay"
+    assert kq.amount("24") == 15 * _M
+    assert kq.amount("30") == 40 * _M           # 60 + 3 − 8 − 15
+    assert kq.amount("31") == 2 * _M
+    assert kq.amount("32") == 6 * _M
+    assert kq.amount("40") == -4 * _M           # lỗ khác, in trong ngoặc đơn
+    assert kq.amount("50") == 36 * _M
+    assert kq.amount("51") == 4 * _M
+    assert kq.amount("60") == 32 * _M
+
+
+def test_income_statement_b02_survives_year_end_transfer(in_memory_db):
+    """Sau Kết chuyển (F11) mẫu B02 vẫn có số — bút toán 911 bị loại như KQKD cũ."""
+    journal = _journal(in_memory_db)
+    journal.create(_entry("BH", date(2026, 1, 10),
+                          [("131", 100 * _M, _Z), ("511", _Z, 100 * _M)]))
+    journal.create(_entry("KC-DT/2026", date(2026, 3, 31),
+                          [("511", 100 * _M, _Z), ("911", _Z, 100 * _M)]))
+
+    service = _report(in_memory_db)
+    kq = service.income_statement_b02(_PERIOD)
+    assert kq.amount("01") == 100 * _M
+    assert kq.amount("02") == _Z                # kết chuyển không phải giảm trừ
+    assert kq.amount("50") == service.income_statement(_PERIOD).profit_before_tax
+
+
+def test_income_statement_b02_prior_year_column(in_memory_db):
+    journal = _journal(in_memory_db)
+    journal.create(_entry("BH25", date(2025, 2, 10),
+                          [("131", 70 * _M, _Z), ("511", _Z, 70 * _M)]))
+    journal.create(_entry("BH26", date(2026, 2, 10),
+                          [("131", 110 * _M, _Z), ("511", _Z, 110 * _M)]))
+
+    kq = _report(in_memory_db).income_statement_b02(_PERIOD)
+    assert kq.prior_period.start == date(2025, 1, 1)
+    assert kq.amount("10") == 110 * _M
+    assert kq.amount("10", prior=True) == 70 * _M
+
+
+def test_cash_flow_statement_b03_maps_indicators(seeded):
+    """Mẫu B03-DNN: thu bán hàng vào [01], chi quản lý vào [02], cộng lên [20]."""
+    cf = _report(seeded).cash_flow_statement(_PERIOD)
+    assert cf.amount("01") == 100 * _M          # Nợ 111 / Có 511
+    assert cf.amount("02") == -5 * _M           # Nợ 642 / Có 111
+    assert cf.amount("20") == 95 * _M
+    assert cf.amount("60") == 200 * _M          # tồn quỹ đầu kỳ
+    assert cf.amount("70") == 295 * _M          # khớp số dư cuối kỳ
+
+
+def test_cash_flow_statement_b03_classifies_every_activity(in_memory_db):
+    journal = _journal(in_memory_db)
+    journal.create(_entry("VAY", date(2026, 1, 5),
+                          [("112", 500 * _M, _Z), ("341", _Z, 500 * _M)]))
+    journal.create(_entry("TSCD", date(2026, 1, 20),
+                          [("211", 300 * _M, _Z), ("112", _Z, 300 * _M)]))
+    journal.create(_entry("LUONG", date(2026, 2, 28),
+                          [("334", 40 * _M, _Z), ("111", _Z, 40 * _M)]))
+    journal.create(_entry("LAIVAY", date(2026, 3, 10),
+                          [("635", 10 * _M, _Z), ("112", _Z, 10 * _M)]))
+    journal.create(_entry("TNDN", date(2026, 3, 20),
+                          [("3334", 20 * _M, _Z), ("112", _Z, 20 * _M)]))
+    # Nộp tiền mặt vào ngân hàng: chỉ luân chuyển nội bộ, không lên báo cáo.
+    journal.create(_entry("NOPNH", date(2026, 3, 25),
+                          [("112", 30 * _M, _Z), ("111", _Z, 30 * _M)]))
+
+    cf = _report(in_memory_db).cash_flow_statement(_PERIOD)
+    assert cf.amount("33") == 500 * _M          # tiền thu từ đi vay
+    assert cf.amount("21") == -300 * _M         # chi mua sắm TSCĐ
+    assert cf.amount("03") == -40 * _M          # chi trả người lao động
+    assert cf.amount("04") == -10 * _M          # lãi vay đã trả
+    assert cf.amount("05") == -20 * _M          # thuế TNDN đã nộp
+    assert cf.amount("20") == -70 * _M
+    assert cf.amount("30") == -300 * _M
+    assert cf.amount("40") == 500 * _M
+    assert cf.amount("50") == 130 * _M          # = 500 − 300 − 40 − 10 − 20
+
+
+def test_cash_flow_statement_b03_net_change_matches_cash_balance(seeded):
+    """[50] luôn bằng chênh lệch tồn quỹ — kể cả khi có chuyển tiền nội bộ."""
+    service = _report(seeded)
+    cf = service.cash_flow_statement(_PERIOD)
+    quy = service.cash_flow(_PERIOD)
+    assert cf.amount("50") == quy.net_change
+    assert cf.amount("70") == quy.closing_balance
+
+
+def test_cash_flow_statement_b03_prior_year_column(in_memory_db):
+    journal = _journal(in_memory_db)
+    journal.create(_entry("BH25", date(2025, 2, 10),
+                          [("111", 80 * _M, _Z), ("511", _Z, 80 * _M)]))
+    journal.create(_entry("BH26", date(2026, 2, 10),
+                          [("111", 90 * _M, _Z), ("511", _Z, 90 * _M)]))
+
+    cf = _report(in_memory_db).cash_flow_statement(_PERIOD)
+    assert cf.prior_period.start == date(2025, 1, 1)
+    assert cf.prior_period.end == date(2025, 3, 31)
+    assert cf.amount("01") == 90 * _M
+    assert cf.amount("01", prior=True) == 80 * _M
 
 
 def test_empty_ledger_reports_are_balanced(in_memory_db):

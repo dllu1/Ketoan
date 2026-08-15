@@ -16,11 +16,16 @@ from data.repositories.partner_repo import PartnerRepository
 from domain.models.account import Account, AccountKind
 from domain.services import account_hierarchy
 from domain.services.opening_service import OpeningBalanceService
+from domain.services.transfer_rule_service import TransferRuleService
 from domain.models.journal import EntryStatus, JournalEntry, JournalLine
 from domain.models.report import (
+    CASH_FLOW_SUBTOTALS,
+    INCOME_STATEMENT_SUBTOTALS,
     BalanceSheet,
     CashFlow,
     CashFlowRow,
+    CashFlowStatement,
+    IncomeStatementB02,
     DebtSummary,
     DebtSummaryRow,
     GeneralJournal,
@@ -54,6 +59,49 @@ _KIND_BY_DIGIT = {
     "9": AccountKind.OTHER,   # 911 — xác định kết quả kinh doanh
 }
 
+# --- Phân loại dòng tiền cho mẫu B03-DNN ----------------------------------
+# Tài khoản đối ứng của khoản tiền (bên Có khi thu, bên Nợ khi chi) → "Mã số"
+# trên mẫu. Dò theo tiền tố 4 ký tự trước rồi 3 ký tự, nên 3334 (thuế TNDN đã
+# nộp) thắng nhóm 333 chung, và 1331 rơi về 133.
+_B03_INFLOW = {
+    "511": "01", "512": "01", "131": "01", "3331": "01", "3387": "01",
+    "515": "25",
+    "211": "22", "213": "22", "217": "22", "241": "22",
+    "121": "24", "128": "24", "171": "24", "221": "24", "222": "24", "228": "24",
+    "411": "31", "419": "31",
+    "341": "33",
+}
+_B03_INFLOW_DEFAULT = "06"        # thu khác từ hoạt động kinh doanh
+
+_B03_OUTFLOW = {
+    "133": "02", "151": "02", "152": "02", "153": "02", "154": "02", "155": "02",
+    "156": "02", "157": "02", "242": "02", "331": "02", "611": "02", "621": "02",
+    "622": "02", "623": "02", "627": "02", "641": "02", "642": "02",
+    "334": "03",
+    "635": "04",
+    "3334": "05",
+    "211": "21", "213": "21", "217": "21", "241": "21",
+    "121": "23", "128": "23", "171": "23", "221": "23", "222": "23", "228": "23",
+    "411": "32", "419": "32",
+    "341": "34",
+    "421": "35",
+}
+_B03_OUTFLOW_DEFAULT = "07"       # chi khác cho hoạt động kinh doanh
+
+# --- Nhóm tài khoản cho mẫu B02-DNN ---------------------------------------
+# TK doanh thu bán hàng: bên Có lên [01], bên Nợ (chiết khấu, giảm giá, hàng
+# bán bị trả lại — TT133 ghi thẳng vào 511) lên [02].
+_B02_REVENUE = ("511", "512")
+_B02_DEDUCTION = ("521",)         # TT200 mở riêng; TT133 thường để trống
+_B02_COGS = ("632",)
+_B02_FIN_REVENUE = ("515",)
+_B02_FIN_EXPENSE = ("635",)
+_B02_INTEREST = ("6351",)         # "Trong đó: chi phí lãi vay" — nằm trong [22]
+_B02_ADMIN = ("641", "642")       # chi phí bán hàng + QLDN = chi phí QLKD
+_B02_OTHER_INCOME = ("711",)
+_B02_OTHER_EXPENSE = ("811",)
+_B02_CIT_EXPENSE = ("821",)
+
 
 class ReportService:
     def __init__(
@@ -62,11 +110,13 @@ class ReportService:
         account_repo: AccountRepository | None = None,
         opening_service: OpeningBalanceService | None = None,
         partner_repo: PartnerRepository | None = None,
+        transfer_rules: TransferRuleService | None = None,
     ) -> None:
         self._journal = journal_repo
         self._accounts = account_repo or AccountRepository()
         self._opening = opening_service or OpeningBalanceService()
         self._partners = partner_repo or PartnerRepository()
+        self._rules = transfer_rules or TransferRuleService()
 
     # ----- public reports ---------------------------------------------------
 
@@ -193,7 +243,13 @@ class ReportService:
         return report
 
     def income_statement(self, period: ReportPeriod) -> IncomeStatement:
-        movements = self._movements(period.start, period.end)
+        # Bỏ chính các bút toán kết chuyển ra khỏi số phát sinh: sau khi chạy
+        # Kết chuyển (F11), TK 511 vừa có Có (doanh thu) vừa có Nợ (KC-DT) nên
+        # net = 0 — báo cáo KQKD và tờ khai TNDN sẽ trắng trơn dù sổ vẫn đủ số.
+        # Bút toán giá vốn KC-GV *không* bị loại vì nó sinh chi phí 632 thật.
+        movements = self._movements(
+            period.start, period.end, skip_result_transfers=True
+        )
         statement = IncomeStatement(period=period)
         for code in sorted(movements):
             debit, credit = movements[code]
@@ -211,6 +267,67 @@ class ReportService:
                         StatementLine(code, self._name_for(code), amount)
                     )
         return statement
+
+    def income_statement_b02(self, period: ReportPeriod) -> IncomeStatementB02:
+        """Báo cáo kết quả hoạt động kinh doanh — Mẫu số B02-DNN.
+
+        Khác :meth:`income_statement` (liệt kê từng TK doanh thu/chi phí để dò
+        sổ), báo cáo này gom số theo đúng các "Mã số" 01…60 của mẫu in, kèm cột
+        Năm trước (cùng khoảng ngày lùi một năm).
+        """
+        prior = ReportPeriod(
+            start=_shift_year(period.start, -1), end=_shift_year(period.end, -1)
+        )
+        return IncomeStatementB02(
+            period=period,
+            prior_period=prior,
+            current=self._b02_amounts(period),
+            prior=self._b02_amounts(prior),
+        )
+
+    def _b02_amounts(self, period: ReportPeriod) -> dict[str, Decimal]:
+        """Số tiền từng "Mã số" của mẫu B02-DNN trong ``period``.
+
+        Dùng chung nguồn với :meth:`income_statement`: số phát sinh đã loại các
+        bút toán kết chuyển sang TK kết quả, nếu không thì sau khi chạy Kết
+        chuyển (F11) mọi TK 5xx/6xx đều net về 0 và báo cáo trắng trơn.
+        """
+        moves = self._movements(period.start, period.end, skip_result_transfers=True)
+
+        def totals(prefixes: tuple[str, ...]) -> tuple[Decimal, Decimal]:
+            debit = credit = _ZERO
+            for code, (d, c) in moves.items():
+                if code.startswith(prefixes):
+                    debit += d
+                    credit += c
+            return debit, credit
+
+        def net_debit(prefixes: tuple[str, ...]) -> Decimal:
+            debit, credit = totals(prefixes)
+            return debit - credit
+
+        def net_credit(prefixes: tuple[str, ...]) -> Decimal:
+            debit, credit = totals(prefixes)
+            return credit - debit
+
+        revenue_debit, revenue_credit = totals(_B02_REVENUE)
+        values = {
+            "01": revenue_credit,
+            "02": revenue_debit + net_debit(_B02_DEDUCTION),
+            "11": net_debit(_B02_COGS),
+            "21": net_credit(_B02_FIN_REVENUE),
+            "22": net_debit(_B02_FIN_EXPENSE),
+            "23": net_debit(_B02_INTEREST),
+            "24": net_debit(_B02_ADMIN),
+            "31": net_credit(_B02_OTHER_INCOME),
+            "32": net_debit(_B02_OTHER_EXPENSE),
+            "51": net_debit(_B02_CIT_EXPENSE),
+        }
+        for total, parts in INCOME_STATEMENT_SUBTOTALS.items():
+            values[total] = sum(
+                (values.get(code, _ZERO) * sign for code, sign in parts), _ZERO
+            )
+        return values
 
     def balance_sheet(self, as_of: date) -> BalanceSheet:
         # Inclusive of as_of: balances accumulate up to and including that day.
@@ -245,6 +362,14 @@ class ReportService:
                 result += -net                    # net debit subtracts from profit
         sheet.result_profit = result
         return sheet
+
+    def net_balances(self, as_of: date) -> dict[str, Decimal]:
+        """Số dư net (Nợ − Có) từng mã TK tính đến hết ngày ``as_of``.
+
+        Khác :meth:`aggregated_balances`: **không** gộp con vào cha, nên dùng được
+        để soi từng tài khoản một (vd: TK nào còn số dư cuối kỳ).
+        """
+        return self._net_balances(before=_day_after(as_of))
 
     def aggregated_balances(self, as_of: date | None = None) -> dict[str, Decimal]:
         """Số dư net theo mã, đã cộng gộp con vào cha (tài khoản tổng hợp).
@@ -346,6 +471,70 @@ class ReportService:
             )
         return report
 
+    def cash_flow_statement(self, period: ReportPeriod) -> CashFlowStatement:
+        """Báo cáo lưu chuyển tiền tệ — Mẫu số B03-DNN, phương pháp trực tiếp.
+
+        Khác :meth:`cash_flow` (liệt kê từng phiếu thu/chi như sổ quỹ), báo cáo
+        này gom số theo đúng các "Mã số" 01…70 của mẫu in, kèm cột Năm trước
+        (cùng khoảng ngày lùi một năm).
+        """
+        prior = ReportPeriod(
+            start=_shift_year(period.start, -1), end=_shift_year(period.end, -1)
+        )
+        return CashFlowStatement(
+            period=period,
+            prior_period=prior,
+            current=self._b03_amounts(period),
+            prior=self._b03_amounts(prior),
+        )
+
+    def _b03_amounts(self, period: ReportPeriod) -> dict[str, Decimal]:
+        """Số tiền từng "Mã số" của mẫu B03-DNN trong ``period``.
+
+        Mỗi bút toán có động vào TK tiền (111/112/113) được phân loại theo tài
+        khoản đối ứng: khoản thu ghi dương, khoản chi ghi âm. Bút toán chỉ
+        chuyển tiền giữa các TK tiền (Nợ 112/Có 111) tự triệt tiêu vì không có
+        tài khoản đối ứng nào ngoài nhóm tiền.
+        """
+        values: dict[str, Decimal] = {}
+
+        def add(code: str, amount: Decimal) -> None:
+            values[code] = values.get(code, _ZERO) + amount
+
+        for entry in self._posted_in_range(period.start, period.end):
+            cash_in = sum(
+                (l.debit for l in entry.lines if self._is_cash(l.account_code)), _ZERO
+            )
+            cash_out = sum(
+                (l.credit for l in entry.lines if self._is_cash(l.account_code)), _ZERO
+            )
+            if cash_in == _ZERO and cash_out == _ZERO:
+                continue
+            credit_side = [
+                (l.account_code, l.credit) for l in entry.lines
+                if l.credit > _ZERO and not self._is_cash(l.account_code)
+            ]
+            debit_side = [
+                (l.account_code, l.debit) for l in entry.lines
+                if l.debit > _ZERO and not self._is_cash(l.account_code)
+            ]
+            for code, share in _spread(cash_in, credit_side):
+                add(_b03_code(code, _B03_INFLOW, _B03_INFLOW_DEFAULT), share)
+            for code, share in _spread(cash_out, debit_side):
+                add(_b03_code(code, _B03_OUTFLOW, _B03_OUTFLOW_DEFAULT), -share)
+
+        opening = _ZERO
+        for code, net in self._net_balances(before=period.start).items():
+            if self._is_cash(code):
+                opening += net
+        values["60"] = opening
+        # [61] chênh lệch tỷ giá: chưa theo dõi ngoại tệ nên luôn bằng 0 — giữ
+        # dòng để mẫu in đủ chỉ tiêu và [70] = [50]+[60]+[61] vẫn đúng.
+        values.setdefault("61", _ZERO)
+        for total, parts in CASH_FLOW_SUBTOTALS.items():
+            values[total] = sum((values.get(p, _ZERO) for p in parts), _ZERO)
+        return values
+
     # ----- aggregation helpers ---------------------------------------------
 
     def _all_entries(self) -> list[JournalEntry]:
@@ -397,14 +586,41 @@ class ReportService:
             cache[before] = self._opening.baseline_before(before)
         return cache[before]
 
-    def _movements(self, start: date, end: date) -> dict[str, tuple[Decimal, Decimal]]:
-        """Gross (debit, credit) per account for postings within ``[start, end]``."""
+    def _movements(
+        self, start: date, end: date, *, skip_result_transfers: bool = False,
+    ) -> dict[str, tuple[Decimal, Decimal]]:
+        """Gross (debit, credit) per account for postings within ``[start, end]``.
+
+        ``skip_result_transfers`` bỏ qua các bút toán kết chuyển xác định kết quả
+        — nhận diện bằng việc bút toán có dòng ghi vào TK kết quả (mặc định 911).
+        """
         moves: dict[str, tuple[Decimal, Decimal]] = {}
         for entry in self._posted_in_range(start, end):
+            if skip_result_transfers and self._is_result_transfer(entry):
+                continue
             for line in entry.lines:
                 debit, credit = moves.get(line.account_code, (_ZERO, _ZERO))
                 moves[line.account_code] = (debit + line.debit, credit + line.credit)
         return moves
+
+    def _result_account(self) -> str:
+        """Mã TK xác định kết quả kinh doanh đang cấu hình (mặc định 911)."""
+        cached = getattr(self, "_result_account_cache", None)
+        if cached is None:
+            cached = self._rules.result_account().strip()
+            self._result_account_cache = cached
+        return cached
+
+    def _is_result_transfer(self, entry: JournalEntry) -> bool:
+        """Bút toán kết chuyển sang TK kết quả (KC-DT, KC-CP, KC-LN, nhóm tự khai).
+
+        Nhận diện theo tài khoản chứ không theo số chứng từ, vì người dùng đổi
+        được tên nhóm quy tắc trong màn hình Kết chuyển.
+        """
+        result = self._result_account()
+        if not result:
+            return False
+        return any(l.account_code.strip().startswith(result) for l in entry.lines)
 
     # ----- chart-of-accounts lookups ---------------------------------------
 
@@ -482,3 +698,44 @@ class ReportService:
 
 def _day_after(value: date) -> date:
     return value + timedelta(days=1)
+
+
+def _shift_year(value: date, delta: int) -> date:
+    """Cùng ngày/tháng ở năm khác (29/02 lùi về 28/02 nếu năm đích không nhuận)."""
+    try:
+        return value.replace(year=value.year + delta)
+    except ValueError:
+        return value.replace(year=value.year + delta, day=28)
+
+
+def _b03_code(account_code: str, table: dict[str, str], default: str) -> str:
+    """Mã số B03-DNN của một tài khoản đối ứng (tiền tố dài khớp trước)."""
+    for length in (4, 3):
+        hit = table.get(account_code[:length])
+        if hit:
+            return hit
+    return default
+
+
+def _spread(
+    total: Decimal, counter_lines: list[tuple[str, Decimal]]
+) -> list[tuple[str, Decimal]]:
+    """Chia ``total`` cho các dòng đối ứng theo tỷ lệ số tiền của chúng.
+
+    Trần chia là tổng bên đối ứng: phần tiền không có đối ứng ngoài nhóm tiền
+    (rút TGNH nhập quỹ) bị bỏ qua, nhờ đó [50] luôn khớp chênh lệch tồn quỹ
+    trong kỳ. Phần dư do làm tròn dồn vào dòng cuối để tổng chia ra khớp đúng
+    số đã chia.
+    """
+    basis = sum((amount for _code, amount in counter_lines), _ZERO)
+    if total <= _ZERO or basis <= _ZERO:
+        return []
+    payload = min(total, basis)
+    shares: list[tuple[str, Decimal]] = []
+    allocated = _ZERO
+    for code, amount in counter_lines[:-1]:
+        share = (payload * amount / basis).quantize(Decimal("1"))
+        shares.append((code, share))
+        allocated += share
+    shares.append((counter_lines[-1][0], payload - allocated))
+    return shares

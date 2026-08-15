@@ -335,7 +335,7 @@ class CostingView(QWidget):
         """
         period = active_period()
         amount = FixedAssetService(FixedAssetRepository()).production_depreciation(
-            period.year, period.month
+            period.year, period.months
         )
         if amount <= Decimal("0"):
             QMessageBox.information(
@@ -346,7 +346,7 @@ class CostingView(QWidget):
             )
             return
         posted = self._pool_service.posted_production_depreciation(
-            period.year, period.month
+            period.year, period.months
         )
         if posted > Decimal("0") and not self._confirm_double_depreciation(posted):
             return

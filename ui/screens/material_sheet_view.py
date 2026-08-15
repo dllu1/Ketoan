@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.period import active_period
+from app.period import PeriodScope, active_period
 from data.repositories.material_sheet_repo import MaterialSheetRepository
 from domain.models.material_sheet import MaterialLine, MaterialSheet
 from domain.money import format_money, parse_money
@@ -31,7 +31,8 @@ from domain.services.material_sheet_service import (
     MaterialSheetService,
 )
 from ui.primitives.button import Button, ButtonVariant
-from ui.primitives.enter_nav import install_grid_enter_nav
+from ui.primitives.enter_nav import first_editable_cell, install_grid_enter_nav
+from ui.tokens import active_tokens
 
 _NEGATIVE = QColor("#ef4444")  # tồn cuối kỳ âm — không hợp lệ
 _LEDGER = QColor("#64748b")    # dòng đồng bộ từ sổ kho (chỉ đọc)
@@ -58,6 +59,20 @@ _CLOSING_COLS = (_C_QTY, _C_VAL)
 
 def period_key() -> str:
     return active_period().key
+
+
+def rollup_hint() -> str:
+    """Câu nhắc thêm vào chú thích khi bảng kê đang gộp từ kỳ con.
+
+    Kỳ quý / cả năm không có bảng riêng: dòng của nó cộng lên từ bảng kê tháng
+    nên bị khóa. Không nói ra thì người dùng tưởng bảng hỏng vì gõ không được.
+    """
+    period = active_period()
+    if period.scope is PeriodScope.MONTH:
+        return ""
+    unit = "ba bảng tháng" if period.scope is PeriodScope.QUARTER else "các kỳ con"
+    return (f"  ·  Kỳ {period.label} gộp số liệu từ {unit} nên các dòng đó chỉ "
+            "đọc — sửa thì chọn đúng tháng ở thanh KỲ KẾ TOÁN")
 
 
 def _fmt_qty(value: Decimal) -> str:
@@ -104,8 +119,9 @@ class MaterialSheetView(QWidget):
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
         header.setSectionResizeMode(_NAME, QHeaderView.Stretch)
         self._table.itemChanged.connect(self._on_item_changed)
-        # Enter = sang ô sửa được kế tiếp; hết bảng thì tự mở dòng mới.
-        install_grid_enter_nav(self._table, add_row=self._add_row)
+        # Enter = sang ô sửa được kế tiếp; hết bảng thì tự mở dòng mới. Dùng bản
+        # bọc vì dòng CỘNG nằm cuối bảng: điều hướng mặc định sẽ nhắm vào nó.
+        install_grid_enter_nav(self._table, add_row=self._add_row_from_nav)
         root.addWidget(self._table, 1)
 
         self._summary = QLabel()
@@ -115,6 +131,9 @@ class MaterialSheetView(QWidget):
 
         # dòng bảng → (SL, TT) NVL đã xuất theo giá thành, để tách khỏi xuất tay.
         self._issued: dict[int, tuple[Decimal, Decimal]] = {}
+        # Dòng CỘNG cuối bảng (dựng lại sau mỗi lần tính): luôn là dòng cuối cùng
+        # và KHÔNG phải dữ liệu — mọi vòng lặp lưu/xóa phải dừng trước nó.
+        self._has_footer = False
 
         self.reload()
 
@@ -124,6 +143,7 @@ class MaterialSheetView(QWidget):
         """(Re)load the worksheet for the active period from the database."""
         self._updating = True
         self._table.setRowCount(0)
+        self._has_footer = False
         self._issued.clear()
         sheet = self._service.load(period_key())
         for line in sheet.lines:
@@ -136,15 +156,21 @@ class MaterialSheetView(QWidget):
             "(không được âm)  ·  Cột Xuất đã gồm NVL tiêu hao theo định mức khi "
             "lưu bảng Giá thành SP (ô xám = số dẫn xuất)  ·  Dòng xám = đồng bộ "
             "từ sổ kho; vật tư nhập tay sẽ tự xuất hiện ở NXT khi lưu"
+            + rollup_hint()
         )
         self._recompute_all()
 
     # ----- row helpers ---------------------------------------------------
 
+    def _data_row_count(self) -> int:
+        """Số dòng vật tư — không kể dòng CỘNG ở chân bảng."""
+        return self._table.rowCount() - (1 if self._has_footer else 0)
+
     def _add_row(self, line: MaterialLine | None = None) -> None:
         was_updating = self._updating
         self._updating = True
-        row = self._table.rowCount()
+        # Chèn TRƯỚC dòng CỘNG để nó luôn nằm cuối.
+        row = self._data_row_count()
         self._table.insertRow(row)
 
         from_ledger = line.from_ledger if line is not None else False
@@ -191,9 +217,25 @@ class MaterialSheetView(QWidget):
         if not was_updating:
             self._recompute_all()
 
+    def _add_row_from_nav(self) -> None:
+        """Enter ở ô cuối = thêm dòng rồi nhảy vào nó.
+
+        Bản điều hướng chung nhắm vào ``rowCount() - 1``, mà đó là dòng CỘNG
+        (không sửa được) nên phải tự đưa con trỏ về dòng vật tư vừa thêm.
+        """
+        self._add_row()
+        target = first_editable_cell(self._table, self._data_row_count() - 1)
+        if target is None:
+            return
+        self._table.setCurrentCell(*target)
+        item = self._table.item(*target)
+        if item is not None:
+            self._table.editItem(item)
+
     def _remove_current_row(self) -> None:
         row = self._table.currentRow()
-        if row >= 0:
+        # Dòng CỘNG không xóa được — nó được dựng lại sau mỗi lần tính.
+        if 0 <= row < self._data_row_count():
             self._table.removeRow(row)
             self._recompute_all()
 
@@ -206,6 +248,7 @@ class MaterialSheetView(QWidget):
 
     def _recompute_all(self) -> None:
         self._updating = True
+        self._drop_footer()
         any_manual_negative = False
         for row in range(self._table.rowCount()):
             line = self._line_at(row)
@@ -218,9 +261,10 @@ class MaterialSheetView(QWidget):
             # row going negative is a real-stock issue, shown red but not blocking.
             if line.is_negative and not line.from_ledger:
                 any_manual_negative = True
+        sheet = self._sheet()
+        self._add_footer(sheet)
         self._updating = False
 
-        sheet = self._sheet()
         self._summary.setText(
             "Tổng tồn cuối kỳ: " + format_money(sheet.total_closing_value)
             + ("    ✗ CÓ TỒN ÂM — KHÔNG THỂ LƯU" if any_manual_negative else "")
@@ -229,6 +273,53 @@ class MaterialSheetView(QWidget):
         self._summary.style().unpolish(self._summary)
         self._summary.style().polish(self._summary)
         self._btn_save.setEnabled(not any_manual_negative)
+
+    # ----- dòng CỘNG ở chân bảng -----------------------------------------
+
+    def _drop_footer(self) -> None:
+        if self._has_footer:
+            self._table.removeRow(self._table.rowCount() - 1)
+            self._has_footer = False
+
+    def _add_footer(self, sheet: MaterialSheet) -> None:
+        """Dòng CỘNG: cộng mọi cột số của bảng.
+
+        Cột SL và ĐG cộng dồn qua nhiều ĐVT khác nhau (kg, cuộn, con…) nên là
+        số để đối chiếu nhanh, không phải một đại lượng có đơn vị — chỉ bốn cột
+        thành tiền mới đối chiếu thẳng được với sổ cái 152.
+        """
+        def total(attr: str) -> Decimal:
+            return sum((getattr(line, attr) for line in sheet.lines), Decimal("0"))
+
+        row = self._table.rowCount()
+        self._table.insertRow(row)
+        self._has_footer = True
+        cells = [""] * len(_HEADERS)
+        cells[_NAME] = "CỘNG"
+        cells[_O_PRICE] = _fmt_qty(total("opening_price"))
+        cells[_O_QTY] = _fmt_qty(total("opening_qty"))
+        cells[_O_VAL] = format_money(total("opening_value"))
+        cells[_I_PRICE] = _fmt_qty(total("in_price"))
+        cells[_I_QTY] = _fmt_qty(total("in_qty"))
+        cells[_I_VAL] = format_money(total("in_value"))
+        cells[_X_PRICE] = _fmt_qty(total("out_price"))
+        # Cột Xuất hiển thị gộp cả phần tiêu hao theo định mức — cộng đúng số
+        # đang hiện trên các dòng, không phải riêng phần xuất tay.
+        cells[_X_QTY] = _fmt_qty(total("total_out_qty"))
+        cells[_X_VAL] = format_money(total("total_out_value"))
+        cells[_C_QTY] = _fmt_qty(total("closing_qty"))
+        cells[_C_VAL] = format_money(total("closing_value"))
+        brand = QColor(active_tokens().brand)
+        for col, value in enumerate(cells):
+            item = QTableWidgetItem(value)
+            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+            if col in _NUM_COLS or col in _CLOSING_COLS:
+                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
+            item.setForeground(brand)
+            self._table.setItem(row, col, item)
 
     def _set_stt(self, row: int, n: int) -> None:
         item = self._table.item(row, _STT)
@@ -284,7 +375,7 @@ class MaterialSheetView(QWidget):
         )
 
     def _sheet(self) -> MaterialSheet:
-        lines = [self._line_at(r) for r in range(self._table.rowCount())]
+        lines = [self._line_at(r) for r in range(self._data_row_count())]
         return MaterialSheet(period_key=period_key(),
                              lines=[ln for ln in lines if not ln.is_empty])
 

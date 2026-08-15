@@ -248,7 +248,7 @@ class _NxtView(QWidget):
         for r in kept:
             groups.setdefault(r.account_code, []).append(r)
 
-        total_closing_value = Decimal("0")
+        total_open = total_in = total_out = total_close = Decimal("0")
         for account in sorted(groups):
             self._add_section_row(self._account_label(account))
             group_open = group_in = group_out = group_close = Decimal("0")
@@ -258,11 +258,26 @@ class _NxtView(QWidget):
                 group_in += r.in_value
                 group_out += r.out_value
                 group_close += r.closing_value
-                total_closing_value += r.closing_value
             self._add_group_total_row(
                 account, group_open, group_in, group_out, group_close
             )
-        self._summary.setText(f"Tổng giá trị tồn cuối kỳ: {format_money(total_closing_value)}")
+            total_open += group_open
+            total_in += group_in
+            total_out += group_out
+            total_close += group_close
+        if len(groups) > 1:
+            # Nhiều nhóm kho cùng hiện → cộng chung để khỏi nhẩm các dòng "Cộng
+            # nhóm". Lọc về một nhóm thì dòng cộng nhóm đã chính là tổng.
+            self._add_group_total_row(
+                "", total_open, total_in, total_out, total_close,
+                label="TỔNG CỘNG",
+            )
+        self._summary.setText(
+            f"Cộng:  Đầu kỳ {format_money(total_open)}"
+            f"    Nhập {format_money(total_in)}"
+            f"    Xuất {format_money(total_out)}"
+            f"    Tồn cuối kỳ {format_money(total_close)}"
+        )
 
     @staticmethod
     def _account_label(account: str) -> str:
@@ -310,13 +325,16 @@ class _NxtView(QWidget):
 
     def _add_group_total_row(
         self, account: str, open_value: Decimal, in_value: Decimal,
-        out_value: Decimal, closing_value: Decimal,
+        out_value: Decimal, closing_value: Decimal, *, label: str = "",
     ) -> None:
-        """Dòng cộng nhóm: chỉ cộng cột tổng tiền (SL/ĐG khác ĐVT nên không cộng)."""
+        """Dòng cộng nhóm: chỉ cộng cột tổng tiền (SL/ĐG khác ĐVT nên không cộng).
+
+        ``label`` ghi đè nhãn để dùng lại cho dòng tổng cộng toàn bảng.
+        """
         row = self._table.rowCount()
         self._table.insertRow(row)
         cells = [""] * len(_HEADERS)
-        cells[_C_NAME] = f"Cộng nhóm {account}" if account else "Cộng nhóm"
+        cells[_C_NAME] = label or (f"Cộng nhóm {account}" if account else "Cộng nhóm")
         cells[_C_O_VAL] = format_money(open_value)
         cells[_C_I_VAL] = format_money(in_value)
         cells[_C_X_VAL] = format_money(out_value)

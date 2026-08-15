@@ -86,9 +86,11 @@ def test_post_generates_inventory_out_and_balanced_journal(in_memory_db):
     # Dr 131 = 165000 (150000 + 10% VAT); Cr 511 150000 + Cr 3331 15000.
     debit_131 = next(l for l in entry.lines if l.account_code == "131")
     assert debit_131.debit == Decimal("165000")
-    # Giá vốn KHÔNG ghi lúc bán nữa — nó được kết chuyển cuối kỳ (KC-GV) theo đơn
-    # giá bình quân cuối kỳ, xem CogsService. Hóa đơn chỉ có doanh thu + thuế.
-    assert {l.account_code for l in entry.lines} == {"131", "511", "3331"}
+    # Giá vốn tạm tính ghi NGAY lúc bán để kho 156 có phát sinh Có đúng ngày bán:
+    # Nợ 632 / Có 156 = 10 × 10.000. Cuối kỳ CogsService chỉ bù phần chênh lệch.
+    assert {l.account_code for l in entry.lines} == {"131", "511", "3331", "632", "156"}
+    assert next(l for l in entry.lines if l.account_code == "632").debit == Decimal("100000")
+    assert next(l for l in entry.lines if l.account_code == "156").credit == Decimal("100000")
 
 
 def test_receivable_line_carries_partner_code(in_memory_db):

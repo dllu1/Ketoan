@@ -35,7 +35,7 @@ from domain.services.product_sheet_service import (
 )
 from ui.primitives.button import Button, ButtonVariant
 from ui.primitives.enter_nav import install_grid_enter_nav
-from ui.screens.material_sheet_view import _fmt_qty, period_key
+from ui.screens.material_sheet_view import _fmt_qty, period_key, rollup_hint
 
 _NEGATIVE = QColor("#ef4444")  # tồn cuối kỳ âm — không hợp lệ
 _LEDGER = QColor("#64748b")    # dòng đồng bộ từ sổ kho (chỉ đọc)
@@ -130,6 +130,7 @@ class ProductSheetView(QWidget):
             "sang bảng Giá thành SP  ·  Nhập·ĐG tự lấy lại giá thành đơn vị vừa "
             "tính  ·  Xuất·ĐG = (TT đầu + TT nhập) ÷ (SL đầu + SL nhập)  ·  "
             "Dòng xám = đồng bộ từ sổ kho"
+            + rollup_hint()
         )
         self._recompute_all()
 

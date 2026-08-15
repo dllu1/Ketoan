@@ -1,19 +1,24 @@
-"""Kết chuyển giá vốn hàng bán cuối kỳ (kho → TK 632).
+"""Điều chỉnh giá vốn hàng bán cuối kỳ (kho → TK 632).
 
-Trong kỳ, hóa đơn bán chỉ ghi doanh thu và xuất kho *số lượng*; giá vốn chưa
-được ghi. Cuối kỳ — sau khi bảng giá thành đã đủ lương công nhân (15402) — toàn
-bộ hàng đã xuất bán được định giá theo **bình quân gia quyền cuối kỳ**:
+Hóa đơn bán ghi giá vốn **tạm tính** ngay lúc bán (Nợ 632 / Có 155,156…) theo
+đơn giá bình quân tại thời điểm xuất, để tài khoản kho có phát sinh Có đúng ngày
+bán và lên được Sổ cái / Cân đối kế toán ngay trong kỳ.
+
+Cuối kỳ — sau khi bảng giá thành đã đủ lương công nhân (15402) — hàng đã xuất
+bán được định giá lại theo **bình quân gia quyền cuối kỳ**:
 
     ĐG xuất = (TT tồn đầu kỳ + TT nhập trong kỳ) / (SL tồn đầu kỳ + SL nhập)
 
-rồi kết chuyển **một** bút toán ``KC-GV/<kỳ>``: Nợ 632 / Có 155,156 (…).
+rồi **một** bút toán ``KC-GV/<kỳ>`` ghi phần *chênh lệch* giữa giá vốn cuối kỳ
+và phần đã ghi tạm tính: Nợ 632 / Có 155,156 (…) khi giá thành tăng, đảo lại khi
+giảm. Không còn chênh lệch thì không sinh bút toán nào.
 
 Nhờ định giá ở bước cuối, lương công nhân về trễ vẫn vào đủ giá thành → giá vốn
 khớp giá thành. Bước này còn **định giá lại** chính các bút toán xuất bán trong
 sổ kho, để Tồn·TT của báo cáo NXT luôn khớp số dư TK kho trên sổ cái.
 
-Idempotent: :meth:`post` xóa bút toán KC-GV cũ rồi tạo lại; việc định giá lại là
-phép gán nên chạy nhiều lần không cộng dồn.
+Idempotent: :meth:`post` xóa bút toán KC-GV cũ rồi tính lại chênh lệch từ chính
+các bút toán bán hàng (vốn không đổi), nên chạy nhiều lần không cộng dồn.
 """
 from __future__ import annotations
 
@@ -36,6 +41,10 @@ _ZERO = Decimal("0")
 
 COGS_ACCOUNT = "632"        # Giá vốn hàng bán
 REF_COGS = "KC-GV"          # tiền tố số chứng từ
+
+# Diễn giải của cặp dòng giá vốn tạm tính mà hóa đơn bán ghi lúc bán. Dùng làm
+# dấu nhận biết để cuối kỳ biết phần nào đã ghi rồi mà chỉ bù chênh lệch.
+COGS_PROVISIONAL_NOTE = "Giá vốn hàng bán (tạm tính)"
 
 
 @dataclass
@@ -63,7 +72,9 @@ class CogsPlan:
 
     @property
     def is_empty(self) -> bool:
-        return self.total <= _ZERO
+        # Theo số dòng chứ không theo tổng: bảng điều chỉnh cuối kỳ có thể gồm
+        # dòng âm (ghi thừa) làm tổng về 0 mà vẫn phải ghi bút toán đảo.
+        return not self.lines
 
 
 class CogsService:
@@ -157,6 +168,52 @@ class CogsService:
             ],
         )
 
+    def provisional(self, date_from: date, date_to: date) -> dict[str, Decimal]:
+        """Giá vốn tạm tính đã ghi trên hóa đơn bán trong kỳ, theo TK kho.
+
+        Đọc thẳng từ **sổ nhật ký** chứ không tính lại từ sổ kho: sổ kho bị
+        :meth:`reprice` ghi đè đơn giá, còn bút toán bán hàng thì không — nhờ vậy
+        chạy lại kết chuyển nhiều lần vẫn ra cùng một phần chênh lệch.
+        """
+        refs = self._sale_refs()
+        posted: dict[str, Decimal] = {}
+        for entry in self._journal.list_all():
+            if entry.status is not EntryStatus.POSTED or entry.ref not in refs:
+                continue
+            if not (date_from <= entry.entry_date <= date_to):
+                continue
+            for line in entry.lines:
+                code = line.account_code.strip()
+                if code == COGS_ACCOUNT or line.description != COGS_PROVISIONAL_NOTE:
+                    continue
+                posted[code] = posted.get(code, _ZERO) + line.credit - line.debit
+        return posted
+
+    def adjustment(self, date_from: date, date_to: date) -> CogsPlan:
+        """Phần giá vốn còn thiếu (>0) hoặc ghi thừa (<0) theo từng TK kho."""
+        final = self.plan(date_from, date_to)
+        posted = self.provisional(date_from, date_to)
+        names = self._account_names()
+        by_account = {ln.account_code: ln for ln in final.lines}
+        lines: list[CogsLine] = []
+        for code in sorted(set(by_account) | set(posted)):
+            line = by_account.get(code)
+            diff = (line.amount if line else _ZERO) - posted.get(code, _ZERO)
+            if diff == _ZERO:
+                continue
+            lines.append(CogsLine(
+                account_code=code,
+                account_name=(line.account_name if line else names.get(code, "")),
+                quantity=(line.quantity if line else _ZERO),
+                amount=diff,
+            ))
+        return CogsPlan(
+            period_tag=final.period_tag,
+            date_from=date_from,
+            date_to=date_to,
+            lines=lines,
+        )
+
     # ----- ghi sổ --------------------------------------------------------
 
     def is_posted(self, date_from: date, date_to: date) -> bool:
@@ -187,7 +244,11 @@ class CogsService:
         return changed
 
     def post(self, date_from: date, date_to: date) -> JournalEntry | None:
-        """Định giá lại + kết chuyển giá vốn sang 632. ``None`` nếu kỳ không có bán.
+        """Định giá lại + ghi phần giá vốn chênh lệch. ``None`` nếu không lệch.
+
+        Giá vốn tạm tính đã nằm trên hóa đơn bán, nên ở đây chỉ bù phần chênh so
+        với đơn giá bình quân cuối kỳ. Dòng lệch dương ghi Nợ 632 / Có kho; lệch
+        âm (giá thành giảm) đảo lại thành Nợ kho / Có 632.
 
         Kiểm tra chốt sổ NGAY ĐẦU: ``reprice`` ghi đè đơn giá trên sổ kho trước
         khi bút toán được tạo, nên nếu để :meth:`JournalService.create` báo lỗi
@@ -196,25 +257,31 @@ class CogsService:
         self._closer.ensure_open(date_to)
         self.unpost(date_from, date_to)
         self.reprice(date_from, date_to)
-        plan = self.plan(date_from, date_to)
+        plan = self.adjustment(date_from, date_to)
         if plan.is_empty:
             return None
         names = self._account_names()
+        lines = [
+            JournalLine(account_code=ln.account_code,
+                        account_name=ln.account_name,
+                        description="Điều chỉnh giá vốn cuối kỳ",
+                        debit=-ln.amount if ln.amount < _ZERO else _ZERO,
+                        credit=ln.amount if ln.amount > _ZERO else _ZERO)
+            for ln in plan.lines
+        ]
+        net = plan.total
+        if net != _ZERO:
+            lines.insert(0, JournalLine(
+                account_code=COGS_ACCOUNT,
+                account_name=names.get(COGS_ACCOUNT, "Giá vốn hàng bán"),
+                description="Điều chỉnh giá vốn hàng xuất bán",
+                debit=net if net > _ZERO else _ZERO,
+                credit=-net if net < _ZERO else _ZERO,
+            ))
         return self._journal.create(JournalEntry(
             ref=f"{REF_COGS}/{plan.period_tag}",
             entry_date=date_to,
-            description=f"Kết chuyển giá vốn hàng bán {plan.period_tag}",
+            description=f"Điều chỉnh giá vốn hàng bán {plan.period_tag}",
             status=EntryStatus.POSTED,
-            lines=[
-                JournalLine(account_code=COGS_ACCOUNT,
-                            account_name=names.get(COGS_ACCOUNT, "Giá vốn hàng bán"),
-                            description="Giá vốn hàng xuất bán",
-                            debit=plan.total)
-            ] + [
-                JournalLine(account_code=ln.account_code,
-                            account_name=ln.account_name,
-                            description="Kết chuyển giá vốn",
-                            credit=ln.amount)
-                for ln in plan.lines
-            ],
+            lines=lines,
         ))

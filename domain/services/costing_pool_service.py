@@ -26,6 +26,7 @@ không phải vế Có của bút toán kết chuyển chính nó.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date
 from decimal import Decimal
 
@@ -33,6 +34,7 @@ from data.repositories.journal_repo import JournalRepository
 from domain.models.costing import CostPools
 from domain.models.journal import EntryStatus
 from domain.services.journal_service import JournalService
+from domain.services.period_tag import months_in
 
 _ZERO = Decimal("0")
 
@@ -101,7 +103,7 @@ class CostingPoolService:
         )
 
     def posted_production_depreciation(
-        self, year: int, month: int | None = None
+        self, year: int, month: int | Iterable[int] | None = None
     ) -> Decimal:
         """Khấu hao máy SX đã NẰM SẴN trong pool SX chung qua bút toán ``KH-…``.
 
@@ -109,10 +111,9 @@ class CostingPoolService:
         tháng (``Nợ 15403 / Có 214``) đã được ghi sổ thì số đó vốn đã được
         ``pools_for`` gom vào pool rồi — cộng thêm lần nữa là tính hai lần.
         Trả về phần Nợ của các TK thuộc pool SX chung trong bút toán ``KH-YYYYMM``
-        của kỳ (``month=None`` = cả năm).
+        của kỳ (một tháng, dãy tháng của quý, hoặc ``None`` = cả năm).
         """
-        months = range(1, 13) if month is None else (month,)
-        refs = {f"{_DEPRECIATION_REF}{year}{m:02d}" for m in months}
+        refs = {f"{_DEPRECIATION_REF}{year}{m:02d}" for m in months_in(month)}
         total = _ZERO
         for entry in self._journal.list_all():
             if entry.status is not EntryStatus.POSTED or entry.ref not in refs:

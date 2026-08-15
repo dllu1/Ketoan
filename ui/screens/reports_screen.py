@@ -18,8 +18,10 @@ class ReportsScreen(ReportViewScreen):
         ("ledger", "Sổ cái"),
         ("trial", "Cân đối TK"),
         ("income", "KQ kinh doanh"),
+        ("income_b02", "KQKD (B02-DNN)"),
         ("balance", "Cân đối kế toán"),
         ("cashflow", "Lưu chuyển tiền"),
+        ("cashflow_b03", "LCTT (B03-DNN)"),
         ("debt_ar", "CN phải thu"),
         ("debt_ap", "CN phải trả"),
     ]
@@ -38,10 +40,16 @@ class ReportsScreen(ReportViewScreen):
             return rt.build_trial_balance(self._service.trial_balance(period))
         if key == "income":
             return rt.build_income_statement(self._service.income_statement(period))
+        if key == "income_b02":
+            return rt.build_income_statement_b02(
+                self._service.income_statement_b02(period))
         if key == "balance":
             return rt.build_balance_sheet(self._service.balance_sheet(period.end))
         if key == "cashflow":
             return rt.build_cash_flow(self._service.cash_flow(period))
+        if key == "cashflow_b03":
+            return rt.build_cash_flow_statement(
+                self._service.cash_flow_statement(period))
         if key == "debt_ar":
             return rt.build_debt_summary(self._service.debt_summary(
                 period, "131", account_label="131 — Phải thu khách hàng",

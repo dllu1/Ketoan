@@ -1,7 +1,7 @@
 """JournalScreen: General Journal (Sổ nhật ký chung) — master/detail of entries."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -263,15 +263,9 @@ class JournalScreen(QWidget):
         reload (the caller reloads once afterwards).
         """
         period = active_period()
-        if period.month is None:
-            start, end = date(period.year, 1, 1), date(period.year, 12, 31)
-        else:
-            start = date(period.year, period.month, 1)
-            next_month = date(
-                period.year + (period.month == 12), period.month % 12 + 1, 1
-            )
-            end = next_month - timedelta(days=1)
-        for widget, value in ((self._from, start), (self._to, end)):
+        # date_from/date_to đã lo cả ba mức tháng / quý / cả năm.
+        for widget, value in ((self._from, period.date_from),
+                              (self._to, period.date_to)):
             blocked = widget.blockSignals(True)
             widget.setDate(QDate(value.year, value.month, value.day))
             widget.blockSignals(blocked)

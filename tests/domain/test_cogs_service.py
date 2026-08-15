@@ -1,9 +1,13 @@
-"""Kết chuyển giá vốn cuối kỳ (KC-GV) — CogsService.
+"""Điều chỉnh giá vốn cuối kỳ (KC-GV) — CogsService.
 
-Trọng tâm: lương công nhân về trễ vẫn phải vào giá vốn. Vì vậy hóa đơn bán không
-còn ghi 632 ngay lúc bán; cuối kỳ mới định giá bình quân **cuối kỳ** rồi kết
-chuyển Nợ 632 / Có kho, đồng thời định giá lại bút toán xuất bán để sổ kho (NXT)
-khớp sổ cái.
+Hai yêu cầu phải cùng đúng:
+
+* Bán hàng là kho phải giảm ngay: hóa đơn ghi giá vốn **tạm tính** Nợ 632 / Có
+  kho theo đơn giá bình quân lúc xuất, nên 155/156 có phát sinh Có đúng ngày bán
+  và lên được Sổ cái ngay trong kỳ.
+* Lương công nhân về trễ vẫn phải vào giá vốn: cuối kỳ định giá lại theo bình
+  quân **cuối kỳ**, ghi phần *chênh lệch* vào KC-GV, đồng thời định giá lại bút
+  toán xuất bán để sổ kho (NXT) khớp sổ cái.
 """
 from __future__ import annotations
 
@@ -117,11 +121,21 @@ def _line(entry, account_code):
     return next(l for l in entry.lines if l.account_code == account_code)
 
 
-# ----- hóa đơn bán không còn ghi 632 ----------------------------------------
+def _ledger_net(journal, account_code):
+    """Số dư Nợ − Có của một tài khoản trên toàn sổ (đủ mọi bút toán)."""
+    total = Decimal("0")
+    for entry in journal.list_all():
+        for line in entry.lines:
+            if line.account_code == account_code:
+                total += line.debit - line.credit
+    return total
 
 
-def test_sales_invoice_no_longer_posts_632(in_memory_db):
-    """Hóa đơn bán chỉ ghi doanh thu; kho vẫn giảm số lượng."""
+# ----- hóa đơn bán ghi giá vốn tạm tính -------------------------------------
+
+
+def test_sales_invoice_posts_provisional_cogs(in_memory_db):
+    """Bán hàng là kho 155 giảm ngay: Nợ 632 / Có 155 theo giá bình quân lúc xuất."""
     sales, inventory, journal, _cogs = _services(in_memory_db)
     _seed_product(in_memory_db)
     _produce(in_memory_db, "100", "10000")
@@ -130,7 +144,10 @@ def test_sales_invoice_no_longer_posts_632(in_memory_db):
 
     entry = journal.find_by_ref("HD001")
     assert entry is not None and entry.is_balanced
-    assert {l.account_code for l in entry.lines} == {"131", "511", "3331"}
+    assert {l.account_code for l in entry.lines} == {"131", "511", "3331", "632", "155"}
+    # 40 × 10.000 — đây là phần "Có" của TK kho mà Sổ cái phải thấy ngay trong kỳ.
+    assert _line(entry, "155").credit == Decimal("400000")
+    assert _line(entry, "632").debit == Decimal("400000")
     # Kho vẫn xuất đủ 40 cái.
     assert inventory.on_hand("TP01") == Decimal("60")
 
@@ -142,9 +159,9 @@ def test_late_wages_are_included_in_period_end_cogs(in_memory_db):
     """Lương về sau khi đã bán vẫn phải nằm trong giá vốn kỳ đó.
 
     1. giá thành CHƯA có lương → nhập 155 giá thấp (10.000/cái)
-    2. bán 40 cái (bút toán xuất kho chốt tạm ở 10.000)
+    2. bán 40 cái (giá vốn tạm tính 40 × 10.000 ghi ngay trên hóa đơn)
     3. lương 15402 về → giá thành 12.000/cái, GT-TP thay giá nhập 155
-    4. kết chuyển cuối kỳ → 632 = 40 × 12.000, KHÔNG phải 40 × 10.000
+    4. cuối kỳ → KC-GV bù đúng phần chênh 40 × 2.000, tổng 632 = 40 × 12.000
     """
     sales, _inventory, journal, cogs = _services(in_memory_db)
     _seed_product(in_memory_db)
@@ -157,33 +174,37 @@ def test_late_wages_are_included_in_period_end_cogs(in_memory_db):
 
     assert entry is not None and entry.ref == "KC-GV/2025-10"
     assert entry.is_balanced
-    assert _line(entry, "632").debit == Decimal("480000")   # 40 × 12.000
-    assert _line(entry, "155").credit == Decimal("480000")
-    # Bút toán bán hàng vẫn không có 632 — giá vốn chỉ nằm ở KC-GV.
-    assert all(l.account_code != "632" for l in journal.find_by_ref("HD001").lines)
+    assert _line(entry, "632").debit == Decimal("80000")    # 40 × (12.000 − 10.000)
+    assert _line(entry, "155").credit == Decimal("80000")
+    # Cộng cả giá vốn tạm tính trên hóa đơn: đúng 40 × 12.000, không thiếu không thừa.
+    assert _ledger_net(journal, "632") == Decimal("480000")
+    # Tổng ghi Có 155 (Nợ − Có nên mang dấu âm) cũng đúng 480.000.
+    assert _ledger_net(journal, "155") == Decimal("-480000")
 
 
 # ----- sổ kho khớp sổ cái ----------------------------------------------------
 
 
 def test_cogs_keeps_nxt_and_ledger_in_agreement(in_memory_db):
-    """Xuất·TT của NXT (155) == số tiền ghi Có 155 trong KC-GV."""
-    sales, inventory, _journal, cogs = _services(in_memory_db)
+    """Xuất·TT của NXT (155) == tổng số ghi Có 155 (tạm tính + điều chỉnh)."""
+    sales, inventory, journal, cogs = _services(in_memory_db)
     _seed_product(in_memory_db)
 
     _produce(in_memory_db, "100", "10000")
     _sell(sales, "HD001", "40")
     _produce(in_memory_db, "100", "12000")
 
-    entry = cogs.post(OCT_FROM, OCT_TO)
+    cogs.post(OCT_FROM, OCT_TO)
 
     row = next(r for r in inventory.compute_nxt(OCT_FROM, OCT_TO)
                if r.item_code == "TP01")
-    assert row.out_value == _line(entry, "155").credit   # 480.000
+    credited = _line(journal.find_by_ref("HD001"), "155").credit \
+        + _line(journal.find_by_ref("KC-GV/2025-10"), "155").credit
+    assert row.out_value == credited == Decimal("480000")
     # Tồn cuối kỳ = 60 cái × 12.000 — khớp số dư TK 155 sau khi ghi Có 480.000.
     assert row.closing_qty == Decimal("60")
     assert row.closing_value == Decimal("720000")
-    assert row.in_value - _line(entry, "155").credit == row.closing_value
+    assert row.in_value - credited == row.closing_value
 
 
 def test_reprice_updates_stored_cost_of_sale_movements(in_memory_db):
@@ -213,12 +234,13 @@ def test_reprice_updates_stored_cost_of_sale_movements(in_memory_db):
 
 
 def test_cogs_post_is_idempotent(in_memory_db):
-    """post 2 lần → vẫn 1 bút toán KC-GV, 632 không cộng dồn."""
+    """post 2 lần → vẫn 1 bút toán KC-GV, phần chênh không cộng dồn."""
     sales, _inventory, journal, cogs = _services(in_memory_db)
     _seed_product(in_memory_db)
 
-    _produce(in_memory_db, "100", "12000")
+    _produce(in_memory_db, "100", "10000")
     _sell(sales, "HD001", "40")
+    _produce(in_memory_db, "100", "12000")
 
     first = cogs.post(OCT_FROM, OCT_TO)
     second = cogs.post(OCT_FROM, OCT_TO)
@@ -226,26 +248,42 @@ def test_cogs_post_is_idempotent(in_memory_db):
     assert first is not None and second is not None
     refs = [e.ref for e in journal.list_all() if e.ref.startswith("KC-GV/")]
     assert refs == ["KC-GV/2025-10"]
-    assert _line(second, "632").debit == Decimal("480000")
+    # Lần hai vẫn đúng 80.000 chứ không thành 160.000, và tổng 632 vẫn 480.000.
+    assert _line(second, "632").debit == Decimal("80000")
+    assert _ledger_net(journal, "632") == Decimal("480000")
     assert cogs.is_posted(OCT_FROM, OCT_TO)
 
     cogs.unpost(OCT_FROM, OCT_TO)
     assert not cogs.is_posted(OCT_FROM, OCT_TO)
 
 
+def test_no_adjustment_when_cost_did_not_move(in_memory_db):
+    """Giá thành không đổi → giá vốn tạm tính đã đúng, không sinh KC-GV."""
+    sales, _inventory, journal, cogs = _services(in_memory_db)
+    _seed_product(in_memory_db)
+
+    _produce(in_memory_db, "100", "12000")
+    _sell(sales, "HD001", "40")
+
+    assert cogs.post(OCT_FROM, OCT_TO) is None
+    assert journal.find_by_ref("KC-GV/2025-10") is None
+    assert _ledger_net(journal, "632") == Decimal("480000")
+
+
 # ----- nối vào kết chuyển 911 ------------------------------------------------
 
 
 def test_result_transfers_cogs_to_911(in_memory_db):
-    """ResultService.post sinh KC-GV rồi KC-CP đưa đúng 632 sang 911."""
+    """ResultService.post chạy KC-GV trước, rồi KC-CP đưa trọn 632 sang 911."""
     from data.repositories.account_repo import AccountRepository
     from domain.services.result_service import ResultService
 
     sales, _inventory, journal, cogs = _services(in_memory_db)
     _seed_product(in_memory_db)
 
-    _produce(in_memory_db, "100", "12000")
+    _produce(in_memory_db, "100", "10000")
     _sell(sales, "HD001", "40")
+    _produce(in_memory_db, "100", "12000")
 
     results = ResultService(journal, AccountRepository(in_memory_db), cogs=cogs)
     created = results.post(OCT_FROM, OCT_TO)
@@ -254,10 +292,9 @@ def test_result_transfers_cogs_to_911(in_memory_db):
     assert refs[0] == "KC-GV/2025-10"          # giá vốn chạy trước
     assert "KC-CP/2025-10" in refs
 
-    kc_gv = journal.find_by_ref("KC-GV/2025-10")
     kc_cp = journal.find_by_ref("KC-CP/2025-10")
-    # 632 phát sinh ở KC-GV được KC-CP kết chuyển trọn sang 911.
-    assert _line(kc_cp, "632").credit == _line(kc_gv, "632").debit == Decimal("480000")
+    # 632 gồm cả phần tạm tính trên hóa đơn lẫn phần điều chỉnh KC-GV.
+    assert _line(kc_cp, "632").credit == Decimal("480000")
     assert results.is_posted(OCT_FROM, OCT_TO)
 
 
@@ -311,9 +348,10 @@ def test_cogs_falls_back_to_stored_cost_when_no_stock(in_memory_db):
     """Kỳ bán không có tồn đầu lẫn nhập → giữ đơn giá đã ghi, không để về 0.
 
     Xảy ra khi hàng nhập kho được ghi sổ với ngày SAU kỳ bán (nhập trễ): NXT của
-    kỳ chưa thấy đồng nhập nào nên không tính được bình quân cuối kỳ.
+    kỳ chưa thấy đồng nhập nào nên không tính được bình quân cuối kỳ. Giá vốn tạm
+    tính trên hóa đơn đã đúng 10 × 7.000 nên cuối kỳ không còn gì để điều chỉnh.
     """
-    sales, inventory, _journal, cogs = _services(in_memory_db)
+    sales, inventory, journal, cogs = _services(in_memory_db)
     _seed_product(in_memory_db)
     # Nhập kho ghi ngày 5/11 — sau kỳ tháng 10.
     inventory.record_in("TP01", Decimal("100"), Decimal("7000"),
@@ -321,7 +359,7 @@ def test_cogs_falls_back_to_stored_cost_when_no_stock(in_memory_db):
     _sell(sales, "HD001", "10")   # bán 15/10, đơn giá chốt 7.000 từ sổ kho
 
     assert cogs.unit_costs(OCT_FROM, OCT_TO).get("TP01") is None
-    entry = cogs.post(OCT_FROM, OCT_TO)
+    assert _line(journal.find_by_ref("HD001"), "632").debit == Decimal("70000")
 
-    assert entry is not None
-    assert _line(entry, "632").debit == Decimal("70000")   # 10 × 7.000, không phải 0
+    assert cogs.post(OCT_FROM, OCT_TO) is None              # không lệch → không ghi
+    assert _ledger_net(journal, "632") == Decimal("70000")  # 10 × 7.000, không phải 0

@@ -139,8 +139,8 @@ class AssetsScreen(QWidget):
             self._year.addItem(str(period.year), period.year)
             index = self._year.count() - 1
         self._year.setCurrentIndex(index)
-        # "Cả năm" → lấy mốc cuối năm cho cột lũy kế.
-        self._month.setCurrentIndex((period.month or 12) - 1)
+        # "Cả năm" → mốc cuối năm, "quý" → tháng cuối quý, cho cột lũy kế.
+        self._month.setCurrentIndex(period.anchor_month - 1)
         self._updating = False
 
     def _reload(self) -> None:
@@ -234,12 +234,26 @@ class AssetsScreen(QWidget):
         asset = self._selected()
         if asset is None:
             return
+        # AssetModal sửa thẳng lên đối tượng đang chọn, nên phải nhớ TK chi phí cũ
+        # TRƯỚC khi mở hộp thoại mới biết người dùng có đổi tài khoản hay không.
+        previous_expense = asset.expense_account
         dialog = AssetModal(self, asset=asset)
         if not dialog.exec():
             return
-        self._save(dialog.asset(), is_update=True)
+        edited = dialog.asset()
+        moved = edited.expense_account != previous_expense
+        if not self._save(edited, is_update=True):
+            return
+        if moved:
+            QMessageBox.information(
+                self, "Đã đổi tài khoản chi phí",
+                f"Khấu hao của '{edited.name}' chuyển từ TK {previous_expense} "
+                f"sang TK {edited.expense_account}.\n"
+                "Các tháng đã ghi khấu hao (KH-YYYYMM) được ghi lại theo tài khoản "
+                "mới; tháng thuộc năm đã chốt sổ thì giữ nguyên.",
+            )
 
-    def _save(self, asset: FixedAsset, *, is_update: bool) -> None:
+    def _save(self, asset: FixedAsset, *, is_update: bool) -> bool:
         try:
             if is_update:
                 self._service.update(asset)
@@ -247,8 +261,9 @@ class AssetsScreen(QWidget):
                 self._service.create(asset)
         except FixedAssetValidationError as exc:
             QMessageBox.warning(self, "Không thể lưu", str(exc))
-            return
+            return False
         self._reload()
+        return True
 
     def _on_post_depreciation(self) -> None:
         year = self._year.currentData()

@@ -319,3 +319,162 @@ class CashFlow:
     @property
     def closing_balance(self) -> Decimal:
         return self.opening_balance + self.net_change
+
+
+# --- Báo cáo lập theo mẫu in ("Mã số" chỉ tiêu) ---------------------------
+
+
+@dataclass(frozen=True)
+class StatementIndicator:
+    """Một dòng trên mẫu in (B02-DNN, B03-DNN): tên chỉ tiêu + "Mã số"."""
+    label: str
+    code: str = ""            # "" cho dòng tiêu đề mục (I, II, III)
+    is_section: bool = False  # tiêu đề mục — không có số liệu
+    is_total: bool = False    # dòng cộng — in đậm
+
+
+@dataclass
+class IndicatorStatement:
+    """Báo cáo tra số theo "Mã số", hai cột Năm nay / Năm trước.
+
+    ``current``/``prior`` là số tiền của từng mã số; khung chỉ tiêu (nhãn, thứ
+    tự, dòng cộng) nằm ở hằng ``*_INDICATORS`` tương ứng, còn công thức cộng ở
+    ``*_SUBTOTALS`` — nên sửa nhãn mẫu in không đụng tới cách tính.
+    """
+    period: ReportPeriod
+    prior_period: ReportPeriod | None = None
+    current: dict[str, Decimal] = field(default_factory=dict)
+    prior: dict[str, Decimal] = field(default_factory=dict)
+
+    def amount(self, code: str, *, prior: bool = False) -> Decimal:
+        source = self.prior if prior else self.current
+        return source.get(code, _ZERO)
+
+
+# --- Báo cáo lưu chuyển tiền tệ — Mẫu số B03-DNN (trực tiếp) --------------
+
+
+# Khung cố định của mẫu số B03-DNN (ban hành theo TT133/2016/TT-BTC) lập theo
+# phương pháp trực tiếp. Chỉ là bố cục — giá trị từng "Mã số" do
+# :meth:`~domain.services.report_service.ReportService.cash_flow_statement`
+# tính từ sổ, nên sửa nhãn ở đây không ảnh hưởng cách tính.
+CASH_FLOW_INDICATORS: tuple[StatementIndicator, ...] = (
+    StatementIndicator("I. Lưu chuyển tiền từ hoạt động kinh doanh", is_section=True),
+    StatementIndicator(
+        "1. Tiền thu từ bán hàng, cung cấp dịch vụ và doanh thu khác", "01"),
+    StatementIndicator("2. Tiền chi trả cho người cung cấp hàng hóa, dịch vụ", "02"),
+    StatementIndicator("3. Tiền chi trả cho người lao động", "03"),
+    StatementIndicator("4. Tiền lãi vay đã trả", "04"),
+    StatementIndicator("5. Thuế thu nhập doanh nghiệp đã nộp", "05"),
+    StatementIndicator("6. Tiền thu khác từ hoạt động kinh doanh", "06"),
+    StatementIndicator("7. Tiền chi khác cho hoạt động kinh doanh", "07"),
+    StatementIndicator(
+        "Lưu chuyển tiền thuần từ hoạt động kinh doanh", "20", is_total=True),
+
+    StatementIndicator("II. Lưu chuyển tiền từ hoạt động đầu tư", is_section=True),
+    StatementIndicator(
+        "1. Tiền chi để mua sắm, xây dựng TSCĐ, BĐSĐT và các tài sản dài hạn khác",
+        "21"),
+    StatementIndicator(
+        "2. Tiền thu từ thanh lý, nhượng bán TSCĐ, BĐSĐT và các tài sản dài hạn khác",
+        "22"),
+    StatementIndicator("3. Tiền chi cho vay, đầu tư góp vốn vào đơn vị khác", "23"),
+    StatementIndicator(
+        "4. Tiền thu hồi cho vay, đầu tư góp vốn vào đơn vị khác", "24"),
+    StatementIndicator(
+        "5. Tiền thu lãi cho vay, cổ tức và lợi nhuận được chia", "25"),
+    StatementIndicator(
+        "Lưu chuyển tiền thuần từ hoạt động đầu tư", "30", is_total=True),
+
+    StatementIndicator("III. Lưu chuyển tiền từ hoạt động tài chính", is_section=True),
+    StatementIndicator(
+        "1. Tiền thu từ phát hành cổ phiếu, nhận vốn góp của chủ sở hữu", "31"),
+    StatementIndicator(
+        "2. Tiền trả lại vốn góp cho các chủ sở hữu, mua lại cổ phiếu của doanh "
+        "nghiệp đã phát hành", "32"),
+    StatementIndicator("3. Tiền thu từ đi vay", "33"),
+    StatementIndicator("4. Tiền trả nợ gốc vay và nợ gốc thuê tài chính", "34"),
+    StatementIndicator("5. Cổ tức, lợi nhuận đã trả cho chủ sở hữu", "35"),
+    StatementIndicator(
+        "Lưu chuyển tiền thuần từ hoạt động tài chính", "40", is_total=True),
+
+    StatementIndicator(
+        "Lưu chuyển tiền thuần trong kỳ (50 = 20+30+40)", "50", is_total=True),
+    StatementIndicator("Tiền và tương đương tiền đầu kỳ", "60"),
+    StatementIndicator(
+        "Ảnh hưởng của thay đổi tỷ giá hối đoái quy đổi ngoại tệ", "61"),
+    StatementIndicator(
+        "Tiền và tương đương tiền cuối kỳ (70 = 50+60+61)", "70", is_total=True),
+)
+
+# Chỉ tiêu cộng → các mã thành phần. Thứ tự khai báo cũng là thứ tự tính:
+# [50] cần [20]/[30]/[40] đã cộng xong, [70] cần [50].
+CASH_FLOW_SUBTOTALS: dict[str, tuple[str, ...]] = {
+    "20": ("01", "02", "03", "04", "05", "06", "07"),
+    "30": ("21", "22", "23", "24", "25"),
+    "40": ("31", "32", "33", "34", "35"),
+    "50": ("20", "30", "40"),
+    "70": ("50", "60", "61"),
+}
+
+
+@dataclass
+class CashFlowStatement(IndicatorStatement):
+    """Báo cáo lưu chuyển tiền tệ theo mẫu B03-DNN (phương pháp trực tiếp).
+
+    Tiền thu mang dấu dương, tiền chi mang dấu âm — đúng như mẫu in (các dòng
+    chi hiện trong ngoặc đơn), nên mọi chỉ tiêu cộng đều là phép cộng thuần.
+    """
+
+
+# --- Báo cáo kết quả hoạt động kinh doanh — Mẫu số B02-DNN ----------------
+
+
+INCOME_STATEMENT_INDICATORS: tuple[StatementIndicator, ...] = (
+    StatementIndicator("1. Doanh thu bán hàng và cung cấp dịch vụ", "01"),
+    StatementIndicator("2. Các khoản giảm trừ doanh thu", "02"),
+    StatementIndicator(
+        "3. Doanh thu thuần về bán hàng và cung cấp dịch vụ (10 = 01 - 02)",
+        "10", is_total=True),
+    StatementIndicator("4. Giá vốn hàng bán", "11"),
+    StatementIndicator(
+        "5. Lợi nhuận gộp về bán hàng và cung cấp dịch vụ (20 = 10 - 11)",
+        "20", is_total=True),
+    StatementIndicator("6. Doanh thu hoạt động tài chính", "21"),
+    StatementIndicator("7. Chi phí tài chính", "22"),
+    StatementIndicator("        Trong đó: Chi phí lãi vay", "23"),
+    StatementIndicator("8. Chi phí quản lý kinh doanh", "24"),
+    StatementIndicator(
+        "9. Lợi nhuận thuần từ hoạt động kinh doanh (30 = 20 + 21 - 22 - 24)",
+        "30", is_total=True),
+    StatementIndicator("10. Thu nhập khác", "31"),
+    StatementIndicator("11. Chi phí khác", "32"),
+    StatementIndicator("12. Lợi nhuận khác (40 = 31 - 32)", "40", is_total=True),
+    StatementIndicator(
+        "13. Tổng lợi nhuận kế toán trước thuế (50 = 30 + 40)", "50", is_total=True),
+    StatementIndicator("14. Chi phí thuế thu nhập doanh nghiệp", "51"),
+    StatementIndicator(
+        "15. Lợi nhuận sau thuế thu nhập doanh nghiệp (60 = 50 - 51)",
+        "60", is_total=True),
+)
+
+# Khác B03-DNN: trên mẫu B02 các dòng chi phí in số dương, nên công thức cộng
+# phải mang dấu — (mã số, dấu). Thứ tự khai báo là thứ tự tính.
+INCOME_STATEMENT_SUBTOTALS: dict[str, tuple[tuple[str, int], ...]] = {
+    "10": (("01", 1), ("02", -1)),
+    "20": (("10", 1), ("11", -1)),
+    "30": (("20", 1), ("21", 1), ("22", -1), ("24", -1)),
+    "40": (("31", 1), ("32", -1)),
+    "50": (("30", 1), ("40", 1)),
+    "60": (("50", 1), ("51", -1)),
+}
+
+
+@dataclass
+class IncomeStatementB02(IndicatorStatement):
+    """Báo cáo kết quả hoạt động kinh doanh theo mẫu B02-DNN.
+
+    Doanh thu và chi phí đều in số dương như mẫu; chỉ các dòng lợi nhuận mới
+    có thể âm (lỗ). Khác :class:`IncomeStatement` — bảng liệt kê theo từng tài
+    khoản dùng để dò sổ, không phải mẫu nộp.
+    """

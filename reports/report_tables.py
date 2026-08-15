@@ -13,9 +13,14 @@ from decimal import Decimal
 
 from domain.money import format_money
 from domain.models.report import (
+    CASH_FLOW_INDICATORS,
+    INCOME_STATEMENT_INDICATORS,
     BalanceSheet,
     CashFlow,
+    CashFlowStatement,
     DebtSummary,
+    IncomeStatementB02,
+    IndicatorStatement,
     GeneralJournal,
     GeneralLedger,
     IncomeStatement,
@@ -317,6 +322,65 @@ def build_cash_flow(report: CashFlow) -> ReportDocument:
         title="BÁO CÁO LƯU CHUYỂN TIỀN TỆ",
         subtitle=f"Kỳ báo cáo: {report.period.label}",
         tables=[table],
+    )
+
+
+def _statement_form_table(indicators, report: IndicatorStatement) -> ReportTable:
+    """Bảng "chỉ tiêu / mã số / thuyết minh / năm nay / năm trước" của mẫu in.
+
+    Dùng chung cho B02-DNN và B03-DNN. Cột "Thuyết minh" để trống: mẫu in dành
+    ô đó cho người lập ghi số hiệu bản thuyết minh, ứng dụng không sinh số này.
+    Chỉ tiêu cuối cùng của mẫu ([60] hoặc [70]) làm dòng tổng.
+    """
+
+    def cells(indicator) -> list:
+        if indicator.is_section:
+            return [indicator.label, "", "", None, None]
+        return [
+            indicator.label,
+            indicator.code,
+            "",
+            _money(report.amount(indicator.code)),
+            _money(report.amount(indicator.code, prior=True)),
+        ]
+
+    *body, closing = indicators
+    return ReportTable(
+        columns=[
+            Column("Chỉ tiêu"),
+            Column("Mã số"),
+            Column("Thuyết minh"),
+            Column("Năm nay", numeric=True),
+            Column("Năm trước", numeric=True),
+        ],
+        rows=[cells(i) for i in body],
+        total_row=cells(closing),
+    )
+
+
+def _statement_form_subtitle(report: IndicatorStatement, lead: str = "") -> str:
+    parts = [lead] if lead else []
+    parts.append(f"Kỳ báo cáo: {report.period.label}")
+    if report.prior_period is not None:
+        parts.append(f"Năm trước: {report.prior_period.label}")
+    return "   ·   ".join(parts)
+
+
+def build_cash_flow_statement(report: CashFlowStatement) -> ReportDocument:
+    """Mẫu số B03-DNN — lưu chuyển tiền tệ theo phương pháp trực tiếp."""
+    return ReportDocument(
+        title="BÁO CÁO LƯU CHUYỂN TIỀN TỆ (Mẫu số B03-DNN)",
+        subtitle=_statement_form_subtitle(report, "Theo phương pháp trực tiếp"),
+        tables=[_statement_form_table(CASH_FLOW_INDICATORS, report)],
+    )
+
+
+def build_income_statement_b02(report: IncomeStatementB02) -> ReportDocument:
+    """Mẫu số B02-DNN — kết quả hoạt động kinh doanh."""
+    return ReportDocument(
+        title="BÁO CÁO KẾT QUẢ HOẠT ĐỘNG KINH DOANH (Mẫu số B02-DNN)",
+        subtitle=_statement_form_subtitle(report),
+        tables=[_statement_form_table(INCOME_STATEMENT_INDICATORS, report)],
     )
 
 

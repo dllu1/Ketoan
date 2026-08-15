@@ -29,10 +29,11 @@ from data.repositories.costing_repo import CostingRepository
 from data.repositories.inventory_repo import InventoryRepository
 from data.repositories.item_repo import ItemRepository
 from domain.models.inventory import InventoryMovement, MovementKind, NxtRow
-from domain.models.product_sheet import ProductLine, ProductSheet
+from domain.models.product_sheet import ProductLine, ProductSheet, _unit
 from domain.services.costing_service import CostingService
 from domain.services.inventory_service import InventoryService
 from domain.services.material_sheet_service import _period_bounds, _unit_cost
+from domain.services.period_tag import child_period_keys
 
 _SHEET_SOURCE_PREFIX = "BK-TP:"      # source tag for worksheet-pushed movements
 _COSTING_SOURCE_PREFIX = "GT-TP:"    # nhập kho TP do chính bảng giá thành đẩy ra
@@ -45,15 +46,49 @@ class ProductSheetError(ValueError):
 
 
 def previous_period_key(period_key: str) -> str:
-    """'2026' → '2025'; '2026-06' → '2026-05'; '2026-01' → '2025-12'."""
+    """'2026' → '2025'; '2026-06' → '2026-05'; '2026-01' → '2025-12';
+    '2026-Q2' → '2026-Q1'; '2026-Q1' → '2025-Q4'."""
     parts = period_key.split("-")
     year = int(parts[0])
     if len(parts) == 1:
         return str(year - 1)
+    if parts[1].upper().startswith("Q"):
+        quarter = int(parts[1][1:])
+        if quarter == 1:
+            return f"{year - 1}-Q4"
+        return f"{year}-Q{quarter - 1}"
     month = int(parts[1])
     if month == 1:
         return f"{year - 1}-12"
     return f"{year}-{month - 1:02d}"
+
+
+def _accumulate_product(
+    merged: dict[str, ProductLine], code: str, line: ProductLine
+) -> None:
+    """Cộng một dòng của kỳ con vào dòng gộp của kỳ rộng."""
+    target = merged.get(code)
+    if target is None:
+        # Kỳ con đầu tiên có mã này quyết định tồn đầu kỳ của cả kỳ rộng.
+        merged[code] = ProductLine(
+            code=code, name=line.name, unit=line.unit,
+            opening_price=line.opening_price,
+            opening_qty=line.opening_qty,
+            opening_value=line.opening_value,
+            in_price=line.in_price, in_qty=line.in_qty, in_value=line.in_value,
+            out_price=line.out_price, out_qty=line.out_qty,
+            out_value=line.out_value,
+            from_ledger=True,
+        )
+        return
+    target.name = target.name or line.name
+    target.unit = target.unit or line.unit
+    target.in_qty += line.in_qty
+    target.in_value += line.in_value
+    target.out_qty += line.out_qty
+    target.out_value += line.out_value
+    target.in_price = _unit(target.in_value, target.in_qty)
+    target.out_price = _unit(target.out_value, target.out_qty)
 
 
 class ProductSheetService:
@@ -78,9 +113,12 @@ class ProductSheetService:
             self._nxt_to_line(r) for r in self._ledger_product_rows(period_key)
         ]
         ledger_codes = {line.code for line in ledger_lines}
-        saved = self._repo.list_for_period(period_key)
-        if saved:
-            manual = [ln for ln in saved if ln.code.strip() not in ledger_codes]
+        own, inherited = self._split_saved_lines(period_key)
+        if own or inherited:
+            manual = [
+                ln for ln in own + inherited
+                if ln.code.strip() not in ledger_codes
+            ]
         else:
             # First open of this period: tồn đầu kỳ = tồn cuối kỳ trước.
             manual = [
@@ -91,10 +129,41 @@ class ProductSheetService:
             line.recompute()
         return ProductSheet(period_key=period_key, lines=ledger_lines + manual)
 
+    # ----- gộp bảng kê kỳ con (quý = ba tháng, năm = bốn quý) --------------
+
+    def saved_lines(self, period_key: str) -> list[ProductLine]:
+        """Dòng nhập tay có hiệu lực của kỳ, đã gộp từ các kỳ con."""
+        own, inherited = self._split_saved_lines(period_key)
+        return own + inherited
+
+    def _split_saved_lines(
+        self, period_key: str
+    ) -> tuple[list[ProductLine], list[ProductLine]]:
+        """Tách dòng khai ở đúng kỳ này khỏi dòng gộp lên từ kỳ con.
+
+        Đầu kỳ lấy của kỳ con SỚM NHẤT có mã đó (đầu kỳ tháng 05 vốn đã là cuối
+        kỳ tháng 04, cộng dồn là nhân đôi); nhập / xuất thì cộng dồn. Mã nào kỳ
+        này đã tự khai thì số của kỳ này thắng.
+
+        Dòng gộp mang cờ ``from_ledger``: kỳ rộng chỉ hiển thị, không sở hữu —
+        nên save() không ghi/đẩy lại (kỳ con đã đẩy rồi) và ``recompute()`` để
+        yên TT xuất đã cộng từ từng tháng thay vì tính bình quân lại cả quý.
+        """
+        own = self._repo.list_for_period(period_key)
+        own_codes = {ln.code.strip() for ln in own if ln.code.strip()}
+        merged: dict[str, ProductLine] = {}
+        for child in child_period_keys(period_key):
+            for line in self.saved_lines(child):
+                code = line.code.strip()
+                if not code or code in own_codes:
+                    continue
+                _accumulate_product(merged, code, line)
+        return own, list(merged.values())
+
     def carry_forward_lines(self, period_key: str) -> list[ProductLine]:
         """Openings for *period_key* built from the previous period's closings."""
         carried: list[ProductLine] = []
-        for prev in self._repo.list_for_period(previous_period_key(period_key)):
+        for prev in self.saved_lines(previous_period_key(period_key)):
             prev.recompute()
             if prev.closing_qty == _ZERO and prev.closing_value == _ZERO:
                 continue
@@ -170,7 +239,7 @@ class ProductSheetService:
 
         for r in self._production_rows(period_key):
             add(r.item_code, r.item_name, r.in_qty)
-        for line in self._repo.list_for_period(period_key):
+        for line in self.saved_lines(period_key):
             add(line.code, line.name, line.in_qty)
         return [(code, name, qty) for code, (name, qty) in aggregated.items()]
 

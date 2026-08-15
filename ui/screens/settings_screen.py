@@ -249,8 +249,8 @@ class SettingsScreen(QWidget):
 
     @staticmethod
     def _prepaid_months(period) -> list[int]:
-        """Cả năm → phân bổ đủ 12 tháng; chọn 1 tháng → chỉ tháng đó."""
-        return list(range(1, 13)) if period.month is None else [period.month]
+        """Cả năm → 12 tháng; quý → 3 tháng của quý; tháng → chỉ tháng đó."""
+        return period.months
 
     def _on_open_prepaid(self) -> None:
         from ui.modals.prepaid_modal import PrepaidModal
@@ -287,9 +287,10 @@ class SettingsScreen(QWidget):
     def _build_result_card(self) -> Card:
         """Kết chuyển doanh thu / chi phí sang 911 rồi sang 4212 cho kỳ đang chọn."""
         card = Card(
-            title="Kết chuyển xác định KQKD (TK 911)",
-            subtitle="Cuối kỳ: kết chuyển 511/515/711 và 632/641/642/811/821 sang "
-                     "TK 911, rồi đưa lãi/lỗ sang TK 4212.",
+            title="Kết chuyển xác định KQKD",
+            subtitle="Lối tắt chạy nhanh cho kỳ đang chọn. Muốn đổi tài khoản nào "
+                     "kết chuyển sang tài khoản nào, theo chiều Nợ hay Có, hãy mở "
+                     "phân hệ “Kết chuyển” (F11).",
         )
         self._result_note = QLabel()
         self._result_note.setObjectName("SettingsNote")

@@ -25,6 +25,7 @@ from ui.chrome.title_bar import TitleBar
 from ui.chrome.top_bar import TopBar
 from ui.screens.assets_screen import AssetsScreen
 from ui.screens.cash_screen import CashScreen
+from ui.screens.closing_screen import ClosingScreen
 from ui.screens.dashboard_screen import DashboardScreen
 from ui.screens.directory_screen import DirectoryScreen
 from ui.screens.help_screen import HelpScreen
@@ -46,6 +47,7 @@ _SCREEN_META: dict[str, tuple[str, str, str]] = {
     "inventory":  ("Kho hàng",           "Inventory",                  "Kho hàng / Inventory"),
     "cash":       ("Quỹ & Ngân hàng",    "Cash & Bank",                "Quỹ & Ngân hàng / Cash"),
     "assets":     ("Tài sản cố định",    "Fixed Assets",               "TSCĐ / Fixed Assets"),
+    "closing":    ("Kết chuyển",         "Period Closing",             "Kết chuyển / Closing"),
     "reports":    ("Báo cáo tài chính",  "Financial Reports",          "Báo cáo / Reports"),
     "tax":        ("Báo cáo thuế",       "Tax Reports",                "Báo cáo thuế / Tax"),
     "directory":  ("Danh mục",           "Catalog",                    "Danh mục / Catalog"),
@@ -126,6 +128,7 @@ class ChromeWindow(QWidget):
             "purchase": PurchaseScreen(),
             "cash": CashScreen(),
             "assets": AssetsScreen(),
+            "closing": ClosingScreen(),
             "reports": ReportsScreen(),
             "tax": TaxScreen(),
             "help": HelpScreen(),

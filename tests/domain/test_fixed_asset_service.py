@@ -41,6 +41,75 @@ def _asset(code="TS001", life=12, cost="120000000", start=date(2026, 1, 1),
     )
 
 
+def _codes(entry):
+    return {ln.account_code for ln in entry.lines}
+
+
+# ----- đổi TK chi phí khấu hao ----------------------------------------------
+
+
+def test_changing_expense_account_moves_posted_depreciation(in_memory_db):
+    """Sửa TK chi phí là số khấu hao ĐÃ ghi phải chuyển sang tài khoản mới."""
+    svc, journal = _service(in_memory_db)
+    asset = svc.create(_asset(expense="642"))
+    svc.post_monthly_depreciation(2026, 6)
+    assert _codes(journal.find_by_ref("KH-202606")) == {"642", "214"}
+
+    asset.expense_account = "641"
+    svc.update(asset)
+
+    entry = journal.find_by_ref("KH-202606")
+    assert _codes(entry) == {"641", "214"}
+    assert next(l for l in entry.lines if l.account_code == "641").debit \
+        == Decimal("10000000")
+
+
+def test_resync_only_touches_months_already_posted(in_memory_db):
+    """Không tự ghi thêm tháng mới — chỉ ghi lại tháng người dùng đã chốt."""
+    svc, journal = _service(in_memory_db)
+    asset = svc.create(_asset(expense="642"))
+    svc.post_monthly_depreciation(2026, 3)
+    svc.post_monthly_depreciation(2026, 4)
+
+    asset.expense_account = "15403"
+    svc.update(asset)
+
+    refs = sorted(e.ref for e in journal.list_all() if e.ref.startswith("KH-"))
+    assert refs == ["KH-202603", "KH-202604"]
+    assert all(_codes(journal.find_by_ref(r)) == {"15403", "214"} for r in refs)
+
+
+def test_resync_skips_closed_years_without_losing_the_entry(in_memory_db):
+    """Năm đã chốt sổ: bút toán cũ giữ nguyên chứ không bị xóa mất."""
+    from domain.services.closing_service import ClosingService
+
+    svc, journal = _service(in_memory_db)
+    asset = svc.create(_asset(expense="642"))
+    svc.post_monthly_depreciation(2026, 6)
+    ClosingService().close_year(2026)
+
+    asset.expense_account = "641"
+    svc.update(asset)
+
+    assert _codes(journal.find_by_ref("KH-202606")) == {"642", "214"}
+
+
+def test_sub_account_of_15403_still_feeds_production_cost(in_memory_db):
+    """TK con tự khai (154031) vẫn là chi phí SX chung → vào giá thành."""
+    svc, _ = _service(in_memory_db)
+    svc.create(_asset(code="TS-SX", expense="154031"))
+
+    assert svc.production_depreciation(2026, 6) == Decimal("10000000")
+
+
+def test_expense_account_is_required(in_memory_db):
+    from domain.services.fixed_asset_service import FixedAssetValidationError
+
+    svc, _ = _service(in_memory_db)
+    with pytest.raises(FixedAssetValidationError, match="tài khoản chi phí"):
+        svc.create(_asset(expense="  "))
+
+
 def test_monthly_depreciation_straight_line(in_memory_db):
     svc, _ = _service(in_memory_db)
     asset = _asset()  # 120,000,000 / 12 = 10,000,000/tháng

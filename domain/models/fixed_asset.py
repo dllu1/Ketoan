@@ -31,8 +31,13 @@ class FixedAsset:
 
     @property
     def feeds_production_cost(self) -> bool:
-        """Khấu hao của tài sản này có vào giá thành (chi phí SX chung) không."""
-        return self.expense_account in PRODUCTION_EXPENSE_ACCOUNTS
+        """Khấu hao của tài sản này có vào giá thành (chi phí SX chung) không.
+
+        So theo **tiền tố** để TK con do người dùng tự khai (154031, 6274…) vẫn
+        được nhận là chi phí sản xuất chung; trước đây chỉ khớp đúng hai mã nên
+        khai chi tiết hơn là khấu hao rơi ra ngoài giá thành."""
+        code = self.expense_account.strip()
+        return bool(code) and code.startswith(PRODUCTION_EXPENSE_ACCOUNTS)
 
     @property
     def depreciable_base(self) -> Decimal:

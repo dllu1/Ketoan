@@ -98,6 +98,7 @@ class Sidebar(QFrame):
         ("inventory", "Kho hàng",         "Inventory",         "box",     "F6",  None),
         ("cash",      "Quỹ & Ngân hàng",  "Cash & Bank",       "wallet",  "F7",  None),
         ("assets",    "Tài sản cố định",  "Fixed Assets",      "cube",    "F8",  None),
+        ("closing",   "Kết chuyển",       "Period Closing",    "export",  "F11", None),
         ("reports",   "Báo cáo tài chính","Financial Reports", "chart",   "F9",  None),
         ("tax",       "Báo cáo thuế",     "Tax Reports",       "tax",     "F10", None),
         ("help",      "Hướng dẫn sử dụng","User Guide",        "help",    "F1",  None),

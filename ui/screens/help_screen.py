@@ -34,6 +34,7 @@ _TAB_LABELS: dict[str, str] = {
     "inventory": "Kho hàng",
     "cash": "Quỹ & Ngân hàng",
     "assets": "Tài sản cố định",
+    "closing": "Kết chuyển",
     "reports": "Báo cáo tài chính",
     "tax": "Báo cáo thuế",
     "directory": "Danh mục",
@@ -67,10 +68,10 @@ _GUIDE: tuple[tuple[str, str | None, tuple[tuple[str, str, tuple[str, ...]], ...
                 ),
             ),
             (
-                "Chuyển phân hệ", "F2–F10",
+                "Chuyển phân hệ", "F2–F11",
                 (
                     "Bấm vào một mục ở thanh bên trái để mở phân hệ tương ứng.",
-                    "Hoặc dùng phím tắt F2 (Tổng quan) đến F10 để chuyển nhanh.",
+                    "Hoặc dùng phím tắt F2 (Tổng quan) đến F11 (Kết chuyển) để chuyển nhanh.",
                     "Trong hướng dẫn này, bấm nút “Mở …” ở mỗi mục để nhảy thẳng tới tab đó.",
                     "Mở lại Hướng dẫn sử dụng này bất cứ lúc nào bằng phím F1.",
                 ),
@@ -105,7 +106,9 @@ _GUIDE: tuple[tuple[str, str | None, tuple[tuple[str, str, tuple[str, ...]], ...
                 "Chọn kỳ kế toán", "",
                 (
                     "Bấm nút kỳ kế toán trên thanh công cụ phía trên.",
-                    "Chọn tháng/quý/năm cần xem; mọi báo cáo và danh sách lọc theo kỳ này.",
+                    "Hộp thoại có ba dòng: Năm, Quý và Tháng. Chọn quý (vd Quý 2 = tháng 04–06) hoặc chọn một tháng; để cả hai ở “Cả năm” là xem trọn năm.",
+                    "Quý và tháng loại trừ nhau: chọn tháng thì quý tự bỏ, và ngược lại — kỳ cuối cùng luôn rõ ràng.",
+                    "Mọi báo cáo, danh sách và bảng kê đều lọc theo kỳ này.",
                     "Kỳ đang chọn hiển thị ở thanh trạng thái dưới cùng.",
                 ),
             ),
@@ -184,6 +187,8 @@ _GUIDE: tuple[tuple[str, str | None, tuple[tuple[str, str, tuple[str, ...]], ...
                 (
                     "Bấm Lưu nháp để giữ hóa đơn chờ xử lý (chưa lên sổ cái, chưa trừ kho).",
                     "Bấm Ghi sổ để ghi nhận chính thức: lên bút toán doanh thu và tự động xuất kho mặt hàng.",
+                    "Ghi sổ cũng ghi luôn giá vốn tạm tính (Nợ 632 / Có 155, 156…) theo đơn giá bình quân lúc xuất, nên tài khoản kho có phát sinh Có ngay trên Sổ cái.",
+                    "Cuối kỳ, phần Kết chuyển (F11) tính lại theo giá bình quân cuối kỳ và chỉ ghi bổ sung phần chênh lệch (KC-GV) — nhờ vậy lương công nhân về trễ vẫn vào đủ giá vốn.",
                     "Với đơn đang nháp trong danh sách, chọn rồi bấm Ghi sổ ở thanh công cụ để ghi sổ sau.",
                 ),
             ),
@@ -326,6 +331,16 @@ _GUIDE: tuple[tuple[str, str | None, tuple[tuple[str, str, tuple[str, ...]], ...
                     "Nếu tồn cuối kỳ ra ÂM, ô bị tô đỏ và nút Lưu bị khóa — hãy sửa lại số liệu trước khi lưu.",
                 ),
             ),
+            (
+                "Bảng kê theo quý / cả năm", "",
+                (
+                    "Chọn quý ở thanh KỲ KẾ TOÁN thì cả hai bảng kê (NVL và TP) tự gộp số liệu của ba bảng tháng trong quý; chọn cả năm thì gộp tiếp từ bốn quý.",
+                    "Cách cộng: Tồn đầu kỳ lấy của tháng SỚM NHẤT có vật tư đó (đầu kỳ tháng 05 vốn đã là cuối kỳ tháng 04, cộng dồn là nhân đôi); Nhập và Xuất thì cộng cả ba tháng. Tồn cuối kỳ quý vì vậy đúng bằng tồn cuối tháng cuối quý.",
+                    "Dòng gộp hiển thị màu xám và KHÔNG sửa được — muốn sửa thì chọn đúng tháng ở thanh KỲ KẾ TOÁN rồi sửa trong bảng của tháng đó.",
+                    "Bấm Lưu ở bảng quý cũng không ghi đè bảng tháng và không đẩy sổ kho lần nữa, nên không sợ trừ kho hai lần.",
+                    "Vẫn thêm được dòng mới ngay ở kỳ quý (vd khoản chỉ theo dõi theo quý). Nếu một mã vừa có ở bảng tháng vừa được khai riêng ở bảng quý thì số khai ở quý được dùng, không cộng cả hai.",
+                ),
+            ),
         ),
     ),
     (
@@ -373,6 +388,16 @@ _GUIDE: tuple[tuple[str, str | None, tuple[tuple[str, str, tuple[str, ...]], ...
                 ),
             ),
             (
+                "Chọn tài khoản chi phí khấu hao", "",
+                (
+                    "Ô “TK chi phí KH” liệt kê toàn bộ hệ thống tài khoản — gõ mã hoặc tên để tìm, kể cả TK con bạn tự khai (vd 6422, 154031).",
+                    "Khấu hao hằng tháng ghi Nợ đúng tài khoản này / Có 214.",
+                    "Đổi tài khoản rồi Lưu: các tháng ĐÃ ghi khấu hao được ghi lại sang tài khoản mới, không phải bấm lại từng tháng.",
+                    "Tháng thuộc năm đã chốt sổ thì giữ nguyên bút toán cũ — muốn sửa phải mở lại năm ở Cấu hình.",
+                    "Máy móc sản xuất nên chọn 15403 (hoặc TK con của nó) để khấu hao vào bảng tính giá thành.",
+                ),
+            ),
+            (
                 "Ghi khấu hao theo kỳ", "",
                 (
                     "Chọn Năm và Tháng cần tính trên thanh công cụ.",
@@ -390,13 +415,72 @@ _GUIDE: tuple[tuple[str, str | None, tuple[tuple[str, str, tuple[str, ...]], ...
         ),
     ),
     (
+        "Kết chuyển cuối kỳ",
+        "closing",
+        (
+            (
+                "Khai quy tắc kết chuyển", "F11",
+                (
+                    "Mở Kết chuyển (F11). Bảng “Quy tắc kết chuyển” quyết định tài khoản nào được kết chuyển sang tài khoản nào — không còn cố định trong chương trình.",
+                    "Cột Chiều kết chuyển: chọn “Nợ TK nguồn / Có TK đích” cho doanh thu (vd 515 sang Có 911), chọn “Có TK nguồn / Nợ TK đích” cho chi phí (vd 642 sang Nợ 911).",
+                    "Cột TK đích không bắt buộc là 911 — có thể kết chuyển 631 sang 632 chẳng hạn.",
+                    "Cột Phạm vi: “Gồm cả TK con” thì 5111, 5112… đi theo quy tắc của 511; muốn tách riêng thì khai thêm một dòng cho đúng mã đó.",
+                    "Cột Số chứng từ gom các dòng vào cùng một bút toán (KC-DT, KC-CP…). Đổi tên nhóm rồi kết chuyển lại thì bút toán cũ tự bị xóa.",
+                    "Bấm Thêm dòng / Xóa dòng để sửa danh sách, Lưu quy tắc để ghi lại, Khôi phục mặc định để quay về bộ chuẩn.",
+                ),
+            ),
+            (
+                "Tài khoản xác định kết quả", "",
+                (
+                    "Khai TK trung gian (mặc định 911) và TK nhận lãi/lỗ (mặc định 4212) ở thẻ trên cùng.",
+                    "Bút toán KC-LN tự sinh: lãi ghi Nợ 911 / Có 4212, lỗ thì đảo lại.",
+                    "Đổi TK xác định kết quả thì các quy tắc đang trỏ về tài khoản cũ được chuyển sang tài khoản mới luôn.",
+                ),
+            ),
+            (
+                "Tài khoản không có số dư cuối kỳ", "",
+                (
+                    "Thẻ giữa màn hình là danh sách những tài khoản phải về 0 sau khi kết chuyển — mặc định 511, 515, 632, 641, 642, 711, 811, 821, 911…",
+                    "Thêm hoặc bớt tài khoản tùy chế độ kế toán của bạn; TK hàng tồn kho và dở dang (154, 155, 156) cố ý KHÔNG có trong danh sách vì được phép còn dư.",
+                    "Cột Phạm vi: “Gồm cả TK con” thì 5111, 5112… bị kiểm tra theo 511; muốn một TK con có dung sai riêng thì khai thêm dòng cho đúng mã đó.",
+                    "Cột Dung sai là mức lệch còn chấp nhận (chênh lệch làm tròn khi phân bổ giá thành). Để 0 là phải sạch tuyệt đối.",
+                    "Cột Kiểm tra chọn Không để tạm bỏ qua một tài khoản mà không phải xóa dòng.",
+                    "Bấm Kiểm tra số dư để soi ngay; bảng dưới liệt kê tài khoản còn dư Nợ / dư Có. Chương trình chỉ cảnh báo, không tự sửa sổ.",
+                    "Còn tài khoản treo số dư thường là do thiếu quy tắc kết chuyển, khai sai chiều Nợ/Có, hoặc có bút toán ghi thêm sau khi đã kết chuyển — sửa rồi kết chuyển lại.",
+                    "Xóa hết dòng rồi bấm Lưu danh sách là tắt hẳn việc kiểm tra này.",
+                ),
+            ),
+            (
+                "Chọn kỳ kết chuyển: tháng / quý / năm", "",
+                (
+                    "Ô “Kết chuyển” ở thẻ dưới cùng chọn theo tháng, theo quý hay theo năm; ô bên cạnh chọn đúng tháng hoặc quý nào của năm đang xem.",
+                    "Đổi lựa chọn là bảng xem trước, dòng trạng thái và bảng kiểm tra số dư cuối kỳ đổi số theo ngay — không phải quay lên thanh KỲ KẾ TOÁN.",
+                    "Mặc định hai ô này bám theo kỳ trên thanh KỲ KẾ TOÁN. Khi bạn chọn khác, dòng trạng thái ghi rõ thanh trên đang là kỳ nào.",
+                    "Số chứng từ mang nhãn kỳ tương ứng: KC-DT/2026-06 (tháng), KC-DT/2026-Q2 (quý), KC-DT/2026 (cả năm) — nên kết chuyển từng quý không đè lên bút toán của tháng.",
+                ),
+            ),
+            (
+                "Xem trước rồi ghi sổ", "",
+                (
+                    "Bảng dưới cùng liệt kê từng dòng sẽ ghi: số chứng từ, TK nguồn, ghi Nợ hay Có, số tiền và TK đích.",
+                    "Bấm Kết chuyển để ghi sổ cho kỳ kết chuyển đang chọn; chạy lại sẽ thay thế bút toán cũ chứ không cộng dồn.",
+                    "Thứ tự chạy: giá vốn (KC-GV) → các nhóm quy tắc → lãi/lỗ (KC-LN).",
+                    "Kết chuyển xong, chương trình tự kiểm tra danh sách “tài khoản không có số dư cuối kỳ” và báo ngay nếu còn tài khoản treo số dư.",
+                    "Bấm Hủy kết chuyển để xóa toàn bộ bút toán KC-… của kỳ.",
+                ),
+            ),
+        ),
+    ),
+    (
         "Báo cáo tài chính",
         "reports",
         (
             (
                 "Chọn và xem báo cáo", "F9",
                 (
-                    "Mở Báo cáo tài chính (F9). Dùng dải nút để chọn: Nhật ký chung, Cân đối TK, KQ kinh doanh, Cân đối kế toán, Lưu chuyển tiền.",
+                    "Mở Báo cáo tài chính (F9). Dùng dải nút để chọn: Nhật ký chung, Cân đối TK, KQ kinh doanh, KQKD (B02-DNN), Cân đối kế toán, Lưu chuyển tiền, LCTT (B03-DNN).",
+                    "Bản thường dùng để dò sổ: KQ kinh doanh liệt kê theo tài khoản, Lưu chuyển tiền liệt kê từng phiếu thu/chi như sổ quỹ.",
+                    "Bản nộp theo mẫu TT133: KQKD (B02-DNN) mã số 01–60 và LCTT (B03-DNN) mã số 01–70, đều có cột Năm trước.",
                     "Đặt khoảng ngày Từ … đến; báo cáo dựng lại tự động.",
                     "Dòng tóm tắt dưới cùng cho biết số dòng dữ liệu trong kỳ.",
                 ),
