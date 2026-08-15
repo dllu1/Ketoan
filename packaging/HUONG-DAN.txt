@@ -1,0 +1,93 @@
+========================================================
+  PHẦN MỀM KẾ TOÁN HƯNG PHÁT
+  Hướng dẫn cài đặt và sử dụng
+========================================================
+
+1. CÀI ĐẶT
+----------
+Không cần cài đặt gì thêm (không cần Python, không cần Office).
+
+  Bước 1. Giải nén file ZIP ra một thư mục cố định, ví dụ:
+            C:\HungPhatAccounting
+          KHÔNG chạy trực tiếp từ bên trong file ZIP.
+
+  Bước 2. Mở thư mục vừa giải nén, chạy file:
+            HungPhatAccounting.exe
+
+  Bước 3. (Nên làm) Bấm chuột phải vào HungPhatAccounting.exe
+          → "Send to" → "Desktop (create shortcut)"
+          để tạo lối tắt ngoài màn hình nền.
+
+Lần đầu chạy, Windows có thể hiện bảng xanh
+"Windows protected your PC".
+  → Bấm "More info", rồi bấm "Run anyway".
+Đây là cảnh báo mặc định cho phần mềm chưa mua chứng chỉ ký số,
+không phải virus.
+
+Yêu cầu: Windows 10 hoặc Windows 11, bản 64-bit.
+
+
+2. DỮ LIỆU CỦA BẠN NẰM Ở ĐÂU
+-----------------------------
+Toàn bộ sổ sách được lưu tại:
+
+    %APPDATA%\HungPhatAccounting\
+
+(Dán đường dẫn trên vào thanh địa chỉ File Explorer để mở.)
+
+    ketoan.db      - toàn bộ số liệu kế toán
+    einvoices\     - file PDF hóa đơn điện tử đã tải về
+
+Dữ liệu KHÔNG nằm trong thư mục chương trình. Nhờ vậy, khi nhận
+bản cập nhật bạn chỉ cần thay thư mục chương trình, số liệu vẫn
+còn nguyên.
+
+
+3. SAO LƯU (nên làm hàng tuần)
+------------------------------
+  Bước 1. ĐÓNG hẳn phần mềm.
+  Bước 2. Mở %APPDATA%\HungPhatAccounting\
+  Bước 3. Sao chép toàn bộ thư mục này sang USB hoặc ổ đám mây.
+
+Lưu ý: phải chép cả các file ketoan.db-wal và ketoan.db-shm
+nếu chúng xuất hiện. Chỉ chép mỗi ketoan.db có thể thiếu những
+bút toán vừa nhập.
+
+Khôi phục: chép thư mục đã sao lưu đè ngược trở lại, khi phần
+mềm đang đóng.
+
+
+4. CẬP NHẬT PHIÊN BẢN MỚI
+--------------------------
+  Bước 1. Đóng phần mềm.
+  Bước 2. Xóa thư mục chương trình cũ (ví dụ C:\HungPhatAccounting).
+  Bước 3. Giải nén bản mới vào đúng vị trí đó.
+Số liệu kế toán không bị ảnh hưởng.
+
+
+5. DÙNG THỬ VỚI DỮ LIỆU MẪU
+----------------------------
+Vào màn hình "Cài đặt" → thẻ "Dữ liệu mẫu (Demo)":
+
+    "Nạp dữ liệu mẫu"      - tạo số liệu giả để tập làm quen
+    "Xóa toàn bộ dữ liệu"  - dọn sạch để bắt đầu nhập thật
+                             (hệ thống tài khoản được giữ lại)
+
+CẢNH BÁO: cả hai nút này đều ghi đè số liệu hiện có.
+Hãy sao lưu trước khi bấm nếu bạn đã nhập số liệu thật.
+
+
+6. GẶP SỰ CỐ
+-------------
+Phần mềm không mở được:
+  - Kiểm tra đã giải nén ra thư mục thật chưa (không chạy trong ZIP).
+  - Kiểm tra thư mục _internal có nằm cạnh file .exe không.
+    Thiếu thư mục này phần mềm sẽ không chạy.
+  - Thử bấm chuột phải → "Run as administrator".
+
+Phần mềm diệt virus xóa mất file:
+  - Thêm thư mục chương trình vào danh sách loại trừ (exclusion),
+    rồi giải nén lại.
+
+Mọi trường hợp khác: liên hệ người gửi bản cài đặt cho bạn, kèm
+theo mô tả thao tác đang làm khi xảy ra lỗi.

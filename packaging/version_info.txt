@@ -1,0 +1,32 @@
+# UTF-8 — Windows VERSIONINFO resource consumed by PyInstaller's `version=`.
+# Keep the four-part tuples in sync with `version` in pyproject.toml.
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(0, 1, 0, 0),
+    prodvers=(0, 1, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0),
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '040404b0',  # Vietnamese, Unicode
+        [
+          StringStruct('CompanyName', 'Hung Phat M&E'),
+          StringStruct('FileDescription', 'Phan mem ke toan Hung Phat'),
+          StringStruct('FileVersion', '0.1.0.0'),
+          StringStruct('InternalName', 'HungPhatAccounting'),
+          StringStruct('LegalCopyright', 'Hung Phat M&E'),
+          StringStruct('OriginalFilename', 'HungPhatAccounting.exe'),
+          StringStruct('ProductName', 'Hung Phat Accounting Suite'),
+          StringStruct('ProductVersion', '0.1.0.0'),
+        ],
+      )
+    ]),
+    VarFileInfo([VarStruct('Translation', [1044, 1200])]),
+  ],
+)
