@@ -140,3 +140,83 @@ def test_save_replaces_inventory_push(in_memory_db):
         InventoryRepository(in_memory_db), ItemRepository(in_memory_db)
     )
     assert inventory.on_hand("NVL01") == Decimal("30")
+
+
+def test_duplicate_item_code_raises_instead_of_sql_error(in_memory_db):
+    """Hai dòng cùng (TK, mã hàng) → báo lỗi rõ ràng, không phải lỗi UNIQUE của SQLite."""
+    from domain.services.opening_service import OpeningValidationError
+
+    svc = _service(in_memory_db)
+    _seed_item(in_memory_db)
+    with pytest.raises(OpeningValidationError) as err:
+        svc.save(2026, [
+            _ob(2026, "152", "NVL01", qty="18", value="614289"),
+            _ob(2026, "152", "NVL01", qty="7", value="420000"),
+        ])
+    assert ("152", "NVL01") in err.value.duplicates
+    assert "NVL01" in str(err.value)
+    assert svc.load(2026) == []          # không ghi dở dang
+
+
+def test_duplicate_account_level_rows_raise(in_memory_db):
+    """Dòng cấp tài khoản (không mã hàng) cũng chỉ được một dòng mỗi TK."""
+    from domain.services.opening_service import OpeningValidationError
+
+    svc = _service(in_memory_db)
+    with pytest.raises(OpeningValidationError):
+        svc.save(2026, [
+            _ob(2026, "331", credit="2000000"),
+            _ob(2026, "331", credit="500000"),
+        ])
+
+
+def test_merge_sums_duplicate_rows(in_memory_db):
+    svc = _service(in_memory_db)
+    _seed_item(in_memory_db)
+    svc.save(2026, [
+        _ob(2026, "152", "NVL01", qty="18", value="614289"),
+        _ob(2026, "152", "NVL01", qty="7", value="420000"),
+        _ob(2026, "331", credit="2000000"),
+    ], merge=True)
+    rows = {(r.account_code, r.item_code): r for r in svc.load(2026)}
+    assert len(rows) == 2
+    merged = rows[("152", "NVL01")]
+    assert merged.opening_qty == Decimal("25")
+    assert merged.opening_value == Decimal("1034289")
+    assert rows[("331", "")].opening_credit == Decimal("2000000")
+
+
+def test_merge_pushes_single_opening_movement(in_memory_db):
+    """Sau khi gộp, sổ kho chỉ có một dòng tồn đầu kỳ với SL đã cộng dồn."""
+    from data.repositories.inventory_repo import InventoryRepository
+    from data.repositories.item_repo import ItemRepository
+    from domain.services.inventory_service import InventoryService
+
+    svc = _service(in_memory_db)
+    _seed_item(in_memory_db)
+    svc.save(2026, [
+        _ob(2026, "152", "NVL01", qty="18", value="614289"),
+        _ob(2026, "152", "NVL01", qty="7", value="420000"),
+    ], merge=True)
+
+    inventory = InventoryService(
+        InventoryRepository(in_memory_db), ItemRepository(in_memory_db)
+    )
+    rows = inventory.compute_nxt(date(2026, 1, 1), date(2026, 12, 31))
+    assert len(rows) == 1
+    assert rows[0].opening_qty == Decimal("25")
+
+
+def test_codes_are_trimmed_before_saving(in_memory_db):
+    """Mã dán từ Excel hay dính khoảng trắng — cắt để không thành hai dòng khác nhau."""
+    from domain.services.opening_service import OpeningValidationError
+
+    svc = _service(in_memory_db)
+    _seed_item(in_memory_db)
+    svc.save(2026, [_ob(2026, " 152 ", " NVL01 ", qty="100", value="5000000")])
+    assert svc.load(2026)[0].item_code == "NVL01"
+    with pytest.raises(OpeningValidationError):
+        svc.save(2026, [
+            _ob(2026, "152", "NVL01", qty="100"),
+            _ob(2026, "152", " NVL01", qty="5"),
+        ])

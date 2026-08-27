@@ -4,6 +4,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -35,7 +36,10 @@ from domain.money import format_money, parse_money
 from domain.services.account_service import AccountService
 from domain.services.bom_service import BomService
 from domain.services.item_service import ItemService
-from domain.services.opening_service import OpeningBalanceService
+from domain.services.opening_service import (
+    OpeningBalanceService,
+    OpeningValidationError,
+)
 from domain.services.partner_service import PartnerService
 from domain.services.report_service import ReportService
 from ui.modals.account_modal import AccountModal
@@ -45,6 +49,8 @@ from ui.primitives.button import Button, ButtonVariant
 from ui.primitives.enter_nav import EnterNavDelegate, install_grid_enter_nav
 from ui.primitives.icon_input import IconInput
 from ui.screens.material_sheet_view import _fmt_qty
+
+_DUPLICATE = QColor("#ef4444")  # mã bị nhập trùng — không lưu được
 
 
 def _parse_decimal(text: str) -> Decimal | None:
@@ -494,7 +500,7 @@ class DirectoryScreen(QWidget):
         btn_del = Button("Xóa dòng", variant=ButtonVariant.DANGER, icon_name="trash")
         btn_del.clicked.connect(self._remove_opening_row)
         btn_save = Button("Lưu", variant=ButtonVariant.PRIMARY, icon_name="check")
-        btn_save.clicked.connect(self._on_opening_save)
+        btn_save.clicked.connect(lambda: self._on_opening_save())
         toolbar.addWidget(btn_add)
         toolbar.addWidget(btn_del)
         toolbar.addWidget(btn_save)
@@ -531,6 +537,7 @@ class DirectoryScreen(QWidget):
             self._add_opening_row(ob)
         if not rows:
             self._add_opening_row()
+        self._highlight_opening_duplicates()
         self._opening_updating = False
 
     def _add_opening_row(self, ob: OpeningBalance | None = None) -> None:
@@ -563,21 +570,24 @@ class DirectoryScreen(QWidget):
         row = self._opening_table.currentRow()
         if row >= 0:
             self._opening_table.removeRow(row)
+            self._highlight_opening_duplicates()
 
     def _on_opening_item_changed(self, cell: QTableWidgetItem) -> None:
         if self._opening_updating:
             return
-        if cell.column() != self._OPEN_ITEM:
+        if cell.column() not in (self._OPEN_ACCOUNT, self._OPEN_ITEM):
             return
         self._opening_updating = True
-        row = cell.row()
-        code = cell.text().strip()
-        item = self._item_lookup().get(code)
-        self._opening_table.item(row, self._OPEN_NAME).setText(item.name if item else "")
-        self._opening_table.item(row, self._OPEN_UNIT).setText(item.unit if item else "")
-        account_cell = self._opening_table.item(row, self._OPEN_ACCOUNT)
-        if item and not account_cell.text().strip():
-            account_cell.setText(item.account_code)
+        if cell.column() == self._OPEN_ITEM:
+            row = cell.row()
+            code = cell.text().strip()
+            item = self._item_lookup().get(code)
+            self._opening_table.item(row, self._OPEN_NAME).setText(item.name if item else "")
+            self._opening_table.item(row, self._OPEN_UNIT).setText(item.unit if item else "")
+            account_cell = self._opening_table.item(row, self._OPEN_ACCOUNT)
+            if item and not account_cell.text().strip():
+                account_cell.setText(item.account_code)
+        self._highlight_opening_duplicates()
         self._opening_updating = False
 
     def _opening_cell(self, row: int, col: int) -> str:
@@ -590,8 +600,9 @@ class DirectoryScreen(QWidget):
         except ValueError:
             return Decimal("0")
 
-    def _on_opening_save(self) -> None:
-        rows: list[OpeningBalance] = []
+    def _opening_row_models(self) -> list[tuple[int, OpeningBalance]]:
+        """Các dòng có dữ liệu trên bảng, kèm chỉ số dòng để tô màu khi lỗi."""
+        models: list[tuple[int, OpeningBalance]] = []
         for r in range(self._opening_table.rowCount()):
             ob = OpeningBalance(
                 fiscal_year=self._opening_year.value(),
@@ -603,17 +614,70 @@ class DirectoryScreen(QWidget):
                 opening_credit=self._opening_num(r, self._OPEN_CREDIT),
             )
             if not ob.is_empty:
-                rows.append(ob)
+                models.append((r, ob))
+        return models
+
+    def _opening_duplicate_rows(self) -> dict[tuple[str, str], list[int]]:
+        """Khóa (mã TK, mã hàng) bị lặp → các dòng đang giữ khóa đó."""
+        seen: dict[tuple[str, str], list[int]] = {}
+        for row, ob in self._opening_row_models():
+            seen.setdefault(ob.key, []).append(row)
+        return {key: rows for key, rows in seen.items() if len(rows) > 1}
+
+    def _highlight_opening_duplicates(self) -> None:
+        """Tô đỏ mã TK / mã hàng của các dòng trùng khóa (mỗi năm chỉ 1 dòng)."""
+        was = self._opening_updating
+        self._opening_updating = True
+        flagged = {r for rows in self._opening_duplicate_rows().values() for r in rows}
+        for r in range(self._opening_table.rowCount()):
+            duplicate = r in flagged
+            for col in (self._OPEN_ACCOUNT, self._OPEN_ITEM):
+                cell = self._opening_table.item(r, col)
+                if cell is None:
+                    continue
+                cell.setForeground(_DUPLICATE if duplicate else QColor())
+                cell.setToolTip(
+                    "Mã này đã có ở dòng khác trong cùng năm — gộp lại hoặc đổi mã."
+                    if duplicate else ""
+                )
+        self._opening_updating = was
+
+    def _on_opening_save(self, merge: bool = False) -> None:
+        year = self._opening_year.value()
+        rows = [ob for _, ob in self._opening_row_models()]
         try:
-            self._opening_service.save(self._opening_year.value(), rows)
+            self._opening_service.save(year, rows, merge=merge)
+        except OpeningValidationError as exc:
+            self._ask_merge_opening_duplicates(exc)
+            return
         except Exception as exc:  # noqa: BLE001 — surface any save failure to user
             QMessageBox.warning(self, "Không thể lưu", str(exc))
             return
         QMessageBox.information(
-            self, "Đã lưu",
-            f"Đã lưu số dư đầu kỳ năm {self._opening_year.value()}.",
+            self, "Đã lưu", f"Đã lưu số dư đầu kỳ năm {year}."
         )
         self._reload_opening()
+
+    def _ask_merge_opening_duplicates(self, exc: OpeningValidationError) -> None:
+        """Chỉ tới dòng trùng đầu tiên rồi hỏi có gộp các dòng trùng lại không."""
+        self._highlight_opening_duplicates()
+        duplicates = self._opening_duplicate_rows()
+        first = min((r for rows in duplicates.values() for r in rows), default=-1)
+        if first >= 0:
+            self._opening_table.setCurrentCell(first, self._OPEN_ITEM)
+            self._opening_table.scrollToItem(
+                self._opening_table.item(first, self._OPEN_ITEM)
+            )
+        message = (
+            f"{exc}\n\n"
+            "Gộp các dòng trùng lại (cộng dồn SL, giá trị, Nợ/Có đầu kỳ) rồi lưu?"
+        )
+        answer = QMessageBox.question(
+            self, "Mã bị nhập trùng", message,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+        )
+        if answer == QMessageBox.Yes:
+            self._on_opening_save(merge=True)
 
     # ----- Định mức (BOM) ----------------------------------------------------
 

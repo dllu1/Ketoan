@@ -20,7 +20,11 @@ from data.repositories.inventory_repo import InventoryRepository
 from data.repositories.item_repo import ItemRepository
 from data.repositories.opening_repo import OpeningBalanceRepository
 from domain.models.inventory import InventoryMovement, MovementKind
-from domain.models.opening import OpeningBalance
+from domain.models.opening import (
+    OpeningBalance,
+    find_duplicates,
+    merge_duplicates,
+)
 from domain.services.inventory_service import InventoryService
 
 _SOURCE_PREFIX = "SDDK:"      # source tag for opening-balance movements
@@ -33,6 +37,23 @@ _STOCK_ACCOUNTS = ("152", "153", "155", "156")
 
 def _unit_cost(value: Decimal, qty: Decimal) -> Decimal:
     return (value / qty).quantize(_ONE) if qty else _ZERO
+
+
+class OpeningValidationError(ValueError):
+    """Bảng số dư đầu kỳ không hợp lệ (hiện tại: có mã trùng nhau).
+
+    ``duplicates`` liệt kê các khóa (mã TK, mã hàng) bị lặp để màn hình gọi tới
+    có thể tô đỏ đúng dòng thay vì chỉ hiện thông báo chung.
+    """
+
+    def __init__(self, message: str, duplicates: list[tuple[str, str]] | None = None) -> None:
+        super().__init__(message)
+        self.duplicates = duplicates or []
+
+
+def _describe(key: tuple[str, str]) -> str:
+    account, item = key
+    return f"TK {account} – mã {item}" if item else f"TK {account} (dòng cấp tài khoản)"
 
 
 class OpeningBalanceService:
@@ -53,12 +74,37 @@ class OpeningBalanceService:
     def load(self, year: int) -> list[OpeningBalance]:
         return self._repo.list_for_year(year)
 
-    def save(self, year: int, rows: list[OpeningBalance]) -> None:
-        kept = [r for r in rows if not r.is_empty]
+    def save(
+        self,
+        year: int,
+        rows: list[OpeningBalance],
+        merge: bool = False,
+    ) -> list[OpeningBalance]:
+        """Lưu số dư đầu kỳ của *year*, trả về danh sách dòng đã ghi.
+
+        Mỗi năm chỉ được một dòng cho mỗi (mã TK, mã hàng). Nếu bảng có mã trùng
+        thì mặc định báo :class:`OpeningValidationError` để người dùng tự sửa;
+        gọi với ``merge=True`` để cộng dồn các dòng trùng thành một dòng.
+        """
+        kept = [r.normalized() for r in rows if not r.is_empty]
+        if merge:
+            kept = merge_duplicates(kept)
+        else:
+            duplicates = find_duplicates(kept)
+            if duplicates:
+                listed = "; ".join(_describe(k) for k in list(duplicates)[:5])
+                extra = "…" if len(duplicates) > 5 else ""
+                raise OpeningValidationError(
+                    f"Có {len(duplicates)} mã bị nhập trùng: {listed}{extra}. "
+                    "Mỗi mã hàng chỉ được một dòng số dư đầu kỳ trong năm — "
+                    "hãy gộp lại hoặc sửa mã cho khác nhau.",
+                    list(duplicates),
+                )
         for r in kept:
             r.fiscal_year = year
         self._repo.replace_for_year(year, kept)
         self._push_to_ledger(year, kept)
+        return kept
 
     # ----- report integration ----------------------------------------------
 
