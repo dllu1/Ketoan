@@ -7,6 +7,52 @@ It supports the **Circular 200** and **Circular 133** accounting regimes (switch
 stores everything locally in **SQLite** — no server required, runs entirely on the user's machine.
 
 > In-app display name: *Hung Phat Accounting* — organization: *Hung Phat M&E*.
+> Sole developer, May – August 2026. In production use at a mechanical &
+> electrical contractor.
+
+**Scale:** ~34,500 lines of Python · 33 domain services · 21 screens ·
+22 schema migrations · **424 automated tests**.
+
+---
+
+## Why this is more than a CRUD app
+
+Four requirements shaped nearly every design decision:
+
+**1 · Two statutory regimes, side by side.** Vietnam operates Circular 200 and
+Circular 133 simultaneously, with different charts of accounts. The application
+switches between them rather than picking one.
+
+**2 · Every document is a journal entry.** A sales invoice is not a row in a
+table. It has to emit balanced journal lines *and* inventory movements, and post
+provisional cost of goods sold at the moment of sale rather than deferring it to
+month end.
+
+**3 · Period-end closing is a chain, and it must be idempotent.** Work in
+progress to finished goods (`154 → 155`), prepaid expense amortization (`242`),
+then results carried to retained earnings (`911 → 4212`). Each step is keyed by
+document number, so running it twice cannot double the books.
+
+**4 · The books have to prove themselves.** After closing, income and expense
+accounts must show a zero balance. The application checks this and reports
+whatever is left standing — it deliberately does **not** silently adjust the
+ledger, because that decision belongs to the accountant.
+See `domain/services/zero_balance_service.py`.
+
+---
+
+## Screenshots
+
+The application running on real books at a mechanical & electrical contractor.
+
+![General journal — keyboard-first entry, F2–F11 module switching](docs/screenshots/journal.png)
+*General journal — keyboard-first entry, F2–F11 module switching*
+
+| | |
+|---|---|
+| ![Entry dialog — live debit/credit balance check](docs/screenshots/journal-entry.png)<br>*Entry dialog — live debit/credit balance check* | ![Purchase invoice — auto-posts journal entries and stock movement](docs/screenshots/purchase-invoice.png)<br>*Purchase invoice — auto-posts journal entries and stock movement* |
+| ![Purchase register — invoices pulled in from email](docs/screenshots/purchases.png)<br>*Purchase register — invoices pulled in from email* | ![Financial reports — Excel and PDF export](docs/screenshots/reports.png)<br>*Financial reports — Excel and PDF export* |
+| ![Searchable in-app user guide, written for non-technical staff](docs/screenshots/user-guide.png)<br>*Searchable in-app user guide, written for non-technical staff* |  |
 
 ---
 
@@ -119,6 +165,42 @@ A clear layering: **UI → domain services → repositories → SQLite**. The `d
 does not import PySide6, so it can be tested independently without a GUI. All SQLite work
 goes through one shared connection on the main thread; network tasks (IMAP) run in a
 `QThread` and hand results back to the main thread for safe DB writes.
+
+### Engineering decisions worth a look
+
+**The domain layer imports no GUI framework.** Not as a style preference — it is
+what makes 424 tests runnable headless in seconds. Business logic never reaches
+for a widget, and the UI never reaches past a service into SQL.
+
+**Migrations are append-only.** 22 numbered `.sql` files applied in order at
+startup. A released migration is never edited; a schema change gets the next
+number. That is why the database on a user's machine can be upgraded without
+anyone exporting and re-importing their books.
+
+**The e-invoice parser branches on schema, because reality does.** Invoices were
+expected to arrive in the current TT78 / Decree 123 format. Real ones turned out
+to include the older `laphoadon.gdt.gov.vn/2014/09/invoicexml/v1` layout, still
+in circulation. The parser detects which it is holding and dispatches
+accordingly — see `domain/services/einvoice_parser.py`. Sale versus purchase is
+then classified automatically by comparing the seller's tax code to the
+company's own.
+
+**Network work is quarantined.** IMAP and OAuth2 run on a `QThread`; results are
+handed back to the main thread, which owns the single SQLite connection. The
+worker never writes to the database itself.
+
+**User data lives outside the program directory.** The database and downloaded
+invoice PDFs sit in `%APPDATA%\HungPhatAccounting\`, so reinstalling or
+upgrading the application cannot touch the books.
+
+**Locking is a year-end operation, not a per-document flag.** Rather than
+marking each voucher posted or unposted, a fiscal year is closed as a unit —
+which is how the accountants who use this actually think about it.
+
+**Known limitation, stated honestly:** email passwords and OAuth tokens are
+base64-*obfuscated* in the `settings` table, not encrypted. On a single-user
+personal machine that was the accepted trade-off; an OS keyring is the correct
+fix and is out of scope for this version.
 
 ---
 

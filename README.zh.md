@@ -10,6 +10,21 @@
 
 ---
 
+## 界面截图
+
+本应用正在一家机电承包商的真实账簿上运行。
+
+![总日记账 — 键盘优先录入，F2–F11 切换模块](docs/screenshots/journal.png)
+*总日记账 — 键盘优先录入，F2–F11 切换模块*
+
+| | |
+|---|---|
+| ![记账凭证窗口 — 实时校验借贷平衡](docs/screenshots/journal-entry.png)<br>*记账凭证窗口 — 实时校验借贷平衡* | ![采购发票 — 自动生成凭证与库存变动](docs/screenshots/purchase-invoice.png)<br>*采购发票 — 自动生成凭证与库存变动* |
+| ![采购发票列表 — 自动从邮箱获取](docs/screenshots/purchases.png)<br>*采购发票列表 — 自动从邮箱获取* | ![财务报表 — 导出 Excel 与 PDF](docs/screenshots/reports.png)<br>*财务报表 — 导出 Excel 与 PDF* |
+| ![内置可搜索的用户手册，面向非技术人员](docs/screenshots/user-guide.png)<br>*内置可搜索的用户手册，面向非技术人员* |  |
+
+---
+
 ## 主要功能
 
 | 模块 | 说明 |

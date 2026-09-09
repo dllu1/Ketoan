@@ -10,6 +10,21 @@ lưu trữ cục bộ bằng **SQLite** — không cần máy chủ, chạy hoà
 
 ---
 
+## Ảnh màn hình
+
+Ứng dụng đang chạy trên sổ sách thật tại một nhà thầu cơ điện.
+
+![Sổ nhật ký chung — nhập liệu bằng bàn phím, chuyển phân hệ bằng F2–F11](docs/screenshots/journal.png)
+*Sổ nhật ký chung — nhập liệu bằng bàn phím, chuyển phân hệ bằng F2–F11*
+
+| | |
+|---|---|
+| ![Cửa sổ bút toán — kiểm tra cân đối Nợ/Có tức thời](docs/screenshots/journal-entry.png)<br>*Cửa sổ bút toán — kiểm tra cân đối Nợ/Có tức thời* | ![Hóa đơn mua vào — tự sinh bút toán và phiếu nhập kho](docs/screenshots/purchase-invoice.png)<br>*Hóa đơn mua vào — tự sinh bút toán và phiếu nhập kho* |
+| ![Danh sách hóa đơn mua — lấy tự động từ email](docs/screenshots/purchases.png)<br>*Danh sách hóa đơn mua — lấy tự động từ email* | ![Báo cáo tài chính — xuất Excel và PDF](docs/screenshots/reports.png)<br>*Báo cáo tài chính — xuất Excel và PDF* |
+| ![Hướng dẫn sử dụng tích hợp, có tìm kiếm](docs/screenshots/user-guide.png)<br>*Hướng dẫn sử dụng tích hợp, có tìm kiếm* |  |
+
+---
+
 ## Tính năng chính
 
 | Phân hệ | Mô tả |

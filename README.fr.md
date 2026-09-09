@@ -11,6 +11,21 @@ aucun serveur requis, tout s'exécute sur la machine de l'utilisateur.
 
 ---
 
+## Captures d'écran
+
+L'application en service sur les livres réels d'un installateur électromécanique.
+
+![Journal général — saisie au clavier, changement de module par F2–F11](docs/screenshots/journal.png)
+*Journal général — saisie au clavier, changement de module par F2–F11*
+
+| | |
+|---|---|
+| ![Fenêtre d'écriture — contrôle d'équilibre débit/crédit en direct](docs/screenshots/journal-entry.png)<br>*Fenêtre d'écriture — contrôle d'équilibre débit/crédit en direct* | ![Facture d'achat — génère écritures et mouvement de stock](docs/screenshots/purchase-invoice.png)<br>*Facture d'achat — génère écritures et mouvement de stock* |
+| ![Registre des achats — factures récupérées depuis la messagerie](docs/screenshots/purchases.png)<br>*Registre des achats — factures récupérées depuis la messagerie* | ![États financiers — export Excel et PDF](docs/screenshots/reports.png)<br>*États financiers — export Excel et PDF* |
+| ![Guide d'utilisation intégré, avec recherche](docs/screenshots/user-guide.png)<br>*Guide d'utilisation intégré, avec recherche* |  |
+
+---
+
 ## Fonctionnalités principales
 
 | Module | Description |
